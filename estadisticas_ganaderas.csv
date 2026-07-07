@@ -1,0 +1,2 @@
+system:index,NDVI,area_aoi_ha,area_aoi_km2,balance_hidrico_mm,biomasa_kg_ms_ha,carga_animal_sugerida_UGG_ha,deficit_mm,exceso_mm,fecha_final,fecha_inicio,humedad_suelo_relativa,semaforo_ganadero,.geo
+0,0.68781833370449,91.97107350684267,0.9197107350684267,356.39553444901816,3271.1184947258075,0.566676613324164,0.0,152.20973294989173,2026-07-06,2026-06-01,0.4939875968197664,1.0,"{""type"":""MultiPoint"",""coordinates"":[]}"
