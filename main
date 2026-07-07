@@ -1,0 +1,309 @@
+// =======================================================
+// MAIN - ORQUESTADOR DEL PROYECTO CLIMCOW
+// =======================================================
+
+// Repositorio del usuario.
+// Si cambias de cuenta o proyecto, ajusta esta ruta.
+var config = require('users/oasotob/Proyecto_Ganadero:modules/01_config');
+var ecmwf = require('users/oasotob/Proyecto_Ganadero:modules/02_ecmwf');
+var lluvia = require('users/oasotob/Proyecto_Ganadero:modules/03_precipitacion');
+var suelos = require('users/oasotob/Proyecto_Ganadero:modules/04_suelos');
+var dem = require('users/oasotob/Proyecto_Ganadero:modules/05_dem');
+var s1 = require('users/oasotob/Proyecto_Ganadero:modules/06_sentinel1');
+var s2 = require('users/oasotob/Proyecto_Ganadero:modules/07_sentinel2');
+var balanceModule = require('users/oasotob/Proyecto_Ganadero:modules/08_balance');
+var ganaderia = require('users/oasotob/Proyecto_Ganadero:modules/09_ganaderia');
+var interfaz = require('users/oasotob/Proyecto_Ganadero:modules/10_ui');
+
+
+// =======================================================
+// FUNCIÓN PRINCIPAL RECALCULABLE
+// Esta función se ejecuta:
+// 1. Al cargar el script por primera vez.
+// 2. Cuando el usuario presiona "Actualizar análisis" en la UI.
+// =======================================================
+
+function ejecutarAplicacion(opciones) {
+  opciones = opciones || {};
+
+  // Si el usuario no envía datos, se usan los de config.
+  var aoi = opciones.aoi || config.AOI;
+  var fechaInicio = opciones.fechaInicio || config.fechaInicio;
+  var fechaFinal = opciones.fechaFinal || config.fechaFinal;
+
+  var escala = config.escala;
+  var paletas = config.paletas;
+
+  // =====================================================
+  // ÁREA DEL AOI
+  // =====================================================
+  // area(1): error máximo de 1 metro.
+  // m² → ha: dividir entre 10.000
+  // ha → km²: dividir entre 100
+
+  var areaAOIHa = aoi.area(1).divide(10000);
+  var areaAOIKm2 = areaAOIHa.divide(100);
+
+  print('======================================');
+  print('Ejecutando análisis ganadero');
+  print('Fecha inicio:', fechaInicio);
+  print('Fecha final:', fechaFinal);
+  print('AOI:', aoi);
+  print('Área AOI ha:', areaAOIHa);
+  print('Área AOI km²:', areaAOIKm2);
+  print('======================================');
+
+
+  // =====================================================
+  // 1. ECMWF - PRONÓSTICO
+  // =====================================================
+
+  var pronostico7 = ecmwf.pronostico7dias(aoi);
+  var pronostico15 = ecmwf.pronostico15dias(aoi);
+
+
+  // =====================================================
+  // 2. LLUVIA OBSERVADA
+  // Modo AUTO:
+  // - Usa CHIRPS si hay datos.
+  // - Si no hay CHIRPS, usa IMERG.
+  // - Si no hay ninguna fuente, devuelve lluvia 0 mm.
+  // =====================================================
+
+  var precipitacionObservada = lluvia.lluviaAcumulada(
+    aoi,
+    fechaInicio,
+    fechaFinal,
+    'AUTO'
+  );
+
+  var diagLluvia = lluvia.diagnostico(
+    aoi,
+    fechaInicio,
+    fechaFinal
+  );
+
+  print('Diagnóstico lluvia - CHIRPS imágenes en periodo:', diagLluvia.nCHIRPS);
+  print('Diagnóstico lluvia - IMERG imágenes en periodo:', diagLluvia.nIMERG);
+  print('Última fecha disponible CHIRPS:', diagLluvia.ultimaFechaCHIRPS);
+  print('Última fecha disponible IMERG:', diagLluvia.ultimaFechaIMERG);
+  print('Lluvia observada usada:', precipitacionObservada);
+  print('Fuente lluvia solicitada:', precipitacionObservada.get('fuente_lluvia_solicitada'));
+  print('Fuente lluvia real:', precipitacionObservada.get('fuente_lluvia_real'));
+  print('Número de imágenes lluvia usadas:', precipitacionObservada.get('n_imagenes_lluvia'));
+
+
+  // =====================================================
+  // 3. SUELOS
+  // =====================================================
+
+  var perfilSuelo = suelos.extraerPerfil(aoi);
+  var aguaDisponible = suelos.calcularAguaDisponible(aoi);
+  var claseSuelo = suelos.clasificarSuelo(aoi);
+
+
+  // =====================================================
+  // 4. DEM
+  // =====================================================
+
+  var elevacion = dem.DEM(aoi);
+  var pendiente = dem.Pendiente(aoi);
+  var aspecto = dem.Aspecto(aoi);
+  var twi = dem.TWI(aoi);
+  var lsFactor = dem.LSFactor(aoi);
+
+
+  // =====================================================
+  // 5. SENTINEL-1
+  // =====================================================
+
+  var vv = s1.VV(aoi, fechaInicio, fechaFinal);
+  var vh = s1.VH(aoi, fechaInicio, fechaFinal);
+  var ratioS1 = s1.Ratio(aoi, fechaInicio, fechaFinal);
+  var humedadS1 = s1.Humedad(aoi, fechaInicio, fechaFinal);
+
+
+  // =====================================================
+  // 6. SENTINEL-2
+  // =====================================================
+
+  var rgb = s2.ComposicionRGB(aoi, fechaInicio, fechaFinal);
+  var ndvi = s2.NDVI(aoi, fechaInicio, fechaFinal);
+  var evi = s2.EVI(aoi, fechaInicio, fechaFinal);
+  var ndmi = s2.NDMI(aoi, fechaInicio, fechaFinal);
+  var ndwi = s2.NDWI(aoi, fechaInicio, fechaFinal);
+  var msavi = s2.MSAVI(aoi, fechaInicio, fechaFinal);
+  var savi = s2.SAVI(aoi, fechaInicio, fechaFinal);
+  var bsi = s2.BSI(aoi, fechaInicio, fechaFinal);
+  var lai = s2.LAI(aoi, fechaInicio, fechaFinal);
+  var coberturaVegetal = s2.CoberturaVegetal(aoi, fechaInicio, fechaFinal);
+  var clorofila = s2.Clorofila(aoi, fechaInicio, fechaFinal);
+
+
+  // =====================================================
+  // 7. BALANCE HÍDRICO
+  // =====================================================
+
+  var balance = balanceModule.calcularBalance({
+    aoi: aoi,
+
+    // Entradas hidrometeorológicas
+    precipitacionObservada: precipitacionObservada,
+    pronostico7: pronostico7,
+    pronostico15: pronostico15,
+
+    // Suelo y relieve
+    aguaDisponible: aguaDisponible,
+    pendiente: pendiente,
+
+    // Sensores
+    humedadS1: humedadS1,
+    ndmi: ndmi,
+    coberturaVegetal: coberturaVegetal
+  });
+
+  // Guardar metadatos de trazabilidad en capas principales.
+  balance.MapaBalance = balance.MapaBalance
+    .set('fecha_inicio', fechaInicio)
+    .set('fecha_final', fechaFinal)
+    .set('area_aoi_ha', areaAOIHa)
+    .set('area_aoi_km2', areaAOIKm2);
+
+  balance.MapaDeficit = balance.MapaDeficit
+    .set('fecha_inicio', fechaInicio)
+    .set('fecha_final', fechaFinal)
+    .set('area_aoi_ha', areaAOIHa)
+    .set('area_aoi_km2', areaAOIKm2);
+
+  balance.MapaExceso = balance.MapaExceso
+    .set('fecha_inicio', fechaInicio)
+    .set('fecha_final', fechaFinal)
+    .set('area_aoi_ha', areaAOIHa)
+    .set('area_aoi_km2', areaAOIKm2);
+
+  balance.HumedadSuelo = balance.HumedadSuelo
+    .set('fecha_inicio', fechaInicio)
+    .set('fecha_final', fechaFinal)
+    .set('area_aoi_ha', areaAOIHa)
+    .set('area_aoi_km2', areaAOIKm2);
+
+
+  // =====================================================
+  // 8. INDICADORES GANADEROS
+  // =====================================================
+
+  var indicadores = ganaderia.generarIndicadores({
+    aoi: aoi,
+    ndvi: ndvi,
+    lai: lai,
+    coberturaVegetal: coberturaVegetal,
+    balance: balance,
+    pronostico7: pronostico7
+  });
+
+  // Guardar metadatos en indicadores principales.
+  indicadores.SemaforoGanadero = indicadores.SemaforoGanadero
+    .set('fecha_inicio', fechaInicio)
+    .set('fecha_final', fechaFinal)
+    .set('area_aoi_ha', areaAOIHa)
+    .set('area_aoi_km2', areaAOIKm2);
+
+  indicadores.Biomasa = indicadores.Biomasa
+    .set('fecha_inicio', fechaInicio)
+    .set('fecha_final', fechaFinal)
+    .set('area_aoi_ha', areaAOIHa)
+    .set('area_aoi_km2', areaAOIKm2);
+
+  indicadores.CargaAnimalSugerida = indicadores.CargaAnimalSugerida
+    .set('fecha_inicio', fechaInicio)
+    .set('fecha_final', fechaFinal)
+    .set('area_aoi_ha', areaAOIHa)
+    .set('area_aoi_km2', areaAOIKm2);
+
+
+  // =====================================================
+  // 9. INTERFAZ
+  // =====================================================
+
+  interfaz.construirInterfaz({
+    aoi: aoi,
+    fechaInicio: fechaInicio,
+    fechaFinal: fechaFinal,
+    escala: escala,
+    paletas: paletas,
+
+    // Área del AOI
+    areaAOIHa: areaAOIHa,
+    areaAOIKm2: areaAOIKm2,
+
+    // Sentinel-2
+    rgb: rgb,
+    ndvi: ndvi,
+    evi: evi,
+    ndmi: ndmi,
+    ndwi: ndwi,
+    msavi: msavi,
+    savi: savi,
+    bsi: bsi,
+    lai: lai,
+    coberturaVegetal: coberturaVegetal,
+    clorofila: clorofila,
+
+    // Sentinel-1
+    vv: vv,
+    vh: vh,
+    ratioS1: ratioS1,
+    humedadS1: humedadS1,
+
+    // DEM
+    elevacion: elevacion,
+    pendiente: pendiente,
+    aspecto: aspecto,
+    twi: twi,
+    lsFactor: lsFactor,
+
+    // Suelos
+    perfilSuelo: perfilSuelo,
+    aguaDisponible: aguaDisponible,
+    claseSuelo: claseSuelo,
+
+    // Clima y pronóstico
+    pronostico7: pronostico7,
+    pronostico15: pronostico15,
+
+    // Lluvia
+    precipitacionObservada: precipitacionObservada,
+    diagnosticoLluvia: diagLluvia,
+
+    // Resultados
+    balance: balance,
+    indicadores: indicadores,
+
+    // Callback para recalcular desde la UI.
+    onActualizar: function(nuevasOpciones) {
+      ejecutarAplicacion(nuevasOpciones);
+    }
+  });
+
+
+  // =====================================================
+  // 10. PRINTS DE CONTROL
+  // =====================================================
+
+  print('Pronóstico 7 días', pronostico7);
+  print('Pronóstico 15 días', pronostico15);
+  print('Perfil suelo', perfilSuelo);
+  print('Balance hídrico', balance);
+  print('Indicadores ganaderos', indicadores);
+}
+
+
+// =======================================================
+// EJECUCIÓN INICIAL
+// =======================================================
+
+ejecutarAplicacion({
+  aoi: config.AOI,
+  fechaInicio: config.fechaInicio,
+  fechaFinal: config.fechaFinal
+});
