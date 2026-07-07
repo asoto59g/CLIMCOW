@@ -2,6 +2,8 @@
 
 Este proyecto implementa una aplicación modular en **Google Earth Engine Code Editor** diseñada para realizar análisis integrales de fincas o áreas de estudio, combinando datos agroclimáticos, hídricos y ganaderos. Su objetivo principal es actuar como una herramienta de apoyo en la toma de decisiones mediante la generación de indicadores clave y mapas de diagnóstico. 
 
+Visor geografico del proyecto:  https://api-project-732156244341.projects.earthengine.app/view/climcow
+
 A continuación, se presenta un resumen de las capas generadas, manteniendo las escalas y explicaciones solicitadas: 
 
 ## 1. Pronóstico Meteorológico (ECMWF) 
