@@ -1,0 +1,204 @@
+/**** modules/04_suelos.js ****/
+
+// =======================================================
+// MÓDULO 04 - SUELOS
+// Fuentes:
+// - OpenLandMap para textura, carbono, pH y densidad aparente
+// - SoilGrids250m v2.0 para agua a 33 kPa y 1500 kPa
+// =======================================================
+
+
+// ===============================
+// ASSETS OPENLANDMAP
+// ===============================
+
+var clay = ee.Image('OpenLandMap/SOL/SOL_CLAY-WFRACTION_USDA-3A1A1A_M/v02');
+var sand = ee.Image('OpenLandMap/SOL/SOL_SAND-WFRACTION_USDA-3A1A1A_M/v02');
+var carbon = ee.Image('OpenLandMap/SOL/SOL_ORGANIC-CARBON_USDA-6A1C_M/v02');
+var ph = ee.Image('OpenLandMap/SOL/SOL_PH-H2O_USDA-4C1A2A_M/v02');
+var bulk = ee.Image('OpenLandMap/SOL/SOL_BULKDENS-FINEEARTH_USDA-4A1H_M/v02');
+
+
+// ===============================
+// ASSETS SOILGRIDS PARA AGUA DEL SUELO
+// ===============================
+
+// Agua volumétrica a 33 kPa.
+// Equivalente aproximado a capacidad de campo.
+var soilgrids33 = ee.Image('ISRIC/SoilGrids250m/v2_0/wv0033');
+
+// Agua volumétrica a 1500 kPa.
+// Equivalente aproximado a punto de marchitez permanente.
+var soilgrids1500 = ee.Image('ISRIC/SoilGrids250m/v2_0/wv1500');
+
+
+// ===============================
+// FUNCIONES AUXILIARES
+// ===============================
+
+// Para OpenLandMap usamos capa superficial b0.
+function b0(img, name) {
+  return img.select('b0').rename(name);
+}
+
+// Para SoilGrids usamos capa superficial media 0-5 cm.
+// Retorna fracción volumétrica, por ejemplo 0.32 = 32%.
+function soilWaterSurfaceFraction(img, name) {
+  return img
+    .select('val_0_5cm_mean')
+    .max(0)
+    .rename(name);
+}
+
+// Versión integrada 0-30 cm usando promedio ponderado.
+// 0-5 cm peso 5
+// 5-15 cm peso 10
+// 15-30 cm peso 15
+function soilWater030Fraction(img, name) {
+  var w05 = img.select('val_0_5cm_mean').multiply(5);
+  var w515 = img.select('val_5_15cm_mean').multiply(10);
+  var w1530 = img.select('val_15_30cm_mean').multiply(15);
+
+  return w05
+    .add(w515)
+    .add(w1530)
+    .divide(30)
+    .max(0)
+    .rename(name);
+}
+
+
+// ===============================
+// VARIABLES DE SUELO
+// ===============================
+
+exports.Arcilla = function(aoi) {
+  return b0(clay, 'arcilla_pct')
+    .clip(aoi);
+};
+
+exports.Arena = function(aoi) {
+  return b0(sand, 'arena_pct')
+    .clip(aoi);
+};
+
+exports.Limo = function(aoi) {
+  return ee.Image(100)
+    .subtract(exports.Arcilla(aoi))
+    .subtract(exports.Arena(aoi))
+    .rename('limo_pct')
+    .clip(aoi);
+};
+
+exports.Carbono = function(aoi) {
+  return b0(carbon, 'carbono_organico')
+    .clip(aoi);
+};
+
+exports.MateriaOrganica = function(aoi) {
+  // Conversión clásica aproximada:
+  // MO = Carbono Orgánico x 1.724
+  return exports.Carbono(aoi)
+    .multiply(1.724)
+    .rename('materia_organica')
+    .clip(aoi);
+};
+
+exports.pH = function(aoi) {
+  // OpenLandMap pH suele venir escalado x10.
+  return b0(ph, 'ph_h2o')
+    .divide(10)
+    .rename('ph_h2o')
+    .clip(aoi);
+};
+
+exports.DensidadAparente = function(aoi) {
+  // OpenLandMap bulk density está en unidades escaladas.
+  // Esta conversión es aproximada a g/cm3.
+  return b0(bulk, 'densidad_aparente')
+    .divide(100)
+    .rename('densidad_aparente_g_cm3')
+    .clip(aoi);
+};
+
+exports.CapacidadCampo = function(aoi) {
+  // SoilGrids wv0033 viene como fracción volumétrica.
+  // Se convierte a porcentaje para mantener compatibilidad
+  // con el cálculo de agua disponible del módulo.
+  return soilWater030Fraction(soilgrids33, 'capacidad_campo_pct')
+    .multiply(100)
+    .rename('capacidad_campo_pct')
+    .clip(aoi);
+};
+
+exports.PuntoMarchitez = function(aoi) {
+  // SoilGrids wv1500 viene como fracción volumétrica.
+  // Se convierte a porcentaje.
+  return soilWater030Fraction(soilgrids1500, 'punto_marchitez_pct')
+    .multiply(100)
+    .rename('punto_marchitez_pct')
+    .clip(aoi);
+};
+
+exports.ProfundidadEfectiva = function(aoi) {
+  // Valor por defecto.
+  // Si tienes un asset de profundidad efectiva real,
+  // reemplaza esta imagen constante.
+  return ee.Image.constant(500)
+    .rename('profundidad_efectiva_mm')
+    .clip(aoi);
+};
+
+
+// ===============================
+// FUNCIONES PRINCIPALES
+// ===============================
+
+exports.extraerPerfil = function(aoi) {
+  return ee.Image.cat([
+    exports.Arcilla(aoi),
+    exports.Arena(aoi),
+    exports.Limo(aoi),
+    exports.MateriaOrganica(aoi),
+    exports.Carbono(aoi),
+    exports.pH(aoi),
+    exports.DensidadAparente(aoi),
+    exports.CapacidadCampo(aoi),
+    exports.PuntoMarchitez(aoi),
+    exports.ProfundidadEfectiva(aoi)
+  ]).clip(aoi);
+};
+
+exports.calcularAguaDisponible = function(aoi) {
+  var cc = exports.CapacidadCampo(aoi);
+  var pm = exports.PuntoMarchitez(aoi);
+  var profundidad = exports.ProfundidadEfectiva(aoi);
+
+  // Agua disponible aproximada:
+  // AD mm = ((CC - PM) / 100) * profundidad efectiva
+  var aguaDisponible = cc
+    .subtract(pm)
+    .divide(100)
+    .multiply(profundidad)
+    .max(0)
+    .rename('agua_disponible_mm');
+
+  return aguaDisponible.clip(aoi);
+};
+
+exports.clasificarSuelo = function(aoi) {
+  var arena = exports.Arena(aoi);
+  var arcilla = exports.Arcilla(aoi);
+
+  // Clasificación textural simplificada:
+  // 1 = Arenoso
+  // 2 = Franco / intermedio
+  // 3 = Arcilloso
+
+  var clase = ee.Image(2)
+    .where(arena.gt(70).and(arcilla.lt(15)), 1)
+    .where(arcilla.gt(40), 3)
+    .rename('clase_suelo');
+
+  return clase.clip(aoi);
+};

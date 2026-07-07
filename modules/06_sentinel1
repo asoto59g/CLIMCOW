@@ -1,0 +1,87 @@
+var S1_ID = 'COPERNICUS/S1_GRD';
+
+function coleccionS1(aoi, fechaInicio, fechaFinal) {
+  return ee.ImageCollection(S1_ID)
+    .filterBounds(aoi)
+    .filterDate(fechaInicio, fechaFinal)
+    .filter(ee.Filter.eq('instrumentMode', 'IW'))
+    .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+    .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+    .select(['VV', 'VH']);
+}
+
+exports.VV = function(aoi, fechaInicio, fechaFinal) {
+  return coleccionS1(aoi, fechaInicio, fechaFinal)
+    .select('VV')
+    .median()
+    .rename('VV')
+    .clip(aoi);
+};
+
+exports.VH = function(aoi, fechaInicio, fechaFinal) {
+  return coleccionS1(aoi, fechaInicio, fechaFinal)
+    .select('VH')
+    .median()
+    .rename('VH')
+    .clip(aoi);
+};
+
+exports.Ratio = function(aoi, fechaInicio, fechaFinal) {
+  var vv = exports.VV(aoi, fechaInicio, fechaFinal);
+  var vh = exports.VH(aoi, fechaInicio, fechaFinal);
+
+  // Ratio en dB: VV - VH
+  return vv.subtract(vh)
+    .rename('ratio_VV_VH')
+    .clip(aoi);
+};
+
+exports.Suavizado = function(img, radioMetros) {
+  radioMetros = radioMetros || 30;
+
+  return img.focalMean({
+    radius: radioMetros,
+    units: 'meters'
+  });
+};
+
+exports.Speckle = function(img) {
+  // Filtro Lee simplificado mediante focal mean.
+  return img.focalMean({
+    radius: 30,
+    units: 'meters'
+  });
+};
+
+exports.Humedad = function(aoi, fechaInicio, fechaFinal) {
+  var vh = exports.Speckle(exports.VH(aoi, fechaInicio, fechaFinal));
+
+  // Normalización local simplificada
+  var humedad = vh.unitScale(-25, -5)
+    .clamp(0, 1)
+    .rename('humedad_s1');
+
+  return humedad.clip(aoi);
+};
+
+exports.CambioTemporal = function(aoi, fechaInicio1, fechaFinal1, fechaInicio2, fechaFinal2) {
+  var h1 = exports.Humedad(aoi, fechaInicio1, fechaFinal1);
+  var h2 = exports.Humedad(aoi, fechaInicio2, fechaFinal2);
+
+  return h2.subtract(h1)
+    .rename('cambio_humedad_s1')
+    .clip(aoi);
+};
+
+exports.SeriesTemporales = function(aoi, fechaInicio, fechaFinal) {
+  return coleccionS1(aoi, fechaInicio, fechaFinal)
+    .map(function(img) {
+      var ratio = img.select('VV')
+        .subtract(img.select('VH'))
+        .rename('ratio_VV_VH');
+
+      return img.addBands(ratio)
+        .clip(aoi)
+        .copyProperties(img, img.propertyNames());
+    });
+};

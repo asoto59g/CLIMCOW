@@ -1,0 +1,892 @@
+
+/**** modules/10_ui.js ****/
+
+// =======================================================
+// MÓDULO 10 - INTERFAZ
+// Proyecto Ganadero
+// =======================================================
+
+// Variables internas para evitar duplicar el panel izquierdo
+// cuando se actualiza el análisis desde la UI.
+var panelIzquierdoGlobal = null;
+var panelIzquierdoInsertado = false;
+
+
+// =======================================================
+// FUNCIÓN PRINCIPAL EXPORTADA
+// =======================================================
+
+function construirInterfaz(app) {
+  var aoi = app.aoi;
+  var paletas = app.paletas;
+
+  // Limpiar capas del mapa.
+  Map.clear();
+
+  // Limpiar widgets superpuestos del mapa para evitar duplicados
+  // cuando se actualiza el análisis.
+  Map.widgets().reset([]);
+
+  Map.centerObject(aoi, 11);
+
+  // =====================================================
+  // CAPA VISUAL DEL AOI USADO EN EL ANÁLISIS
+  // Aparece en el control de capas, apagada por defecto.
+  // =====================================================
+
+  var aoiVisual = ee.FeatureCollection([
+    ee.Feature(aoi)
+  ]).style({
+    color: '00FFFF',
+    fillColor: '00000000',
+    width: 3
+  });
+
+  // ===============================
+  // DEFINICIÓN DE CAPAS
+  // ===============================
+
+  var capas = {
+    AOI_Finca: {
+      img: aoiVisual,
+      vis: {},
+      visible: false
+    },
+
+    NDVI: {
+      img: app.ndvi,
+      vis: {
+        min: 0,
+        max: 0.9,
+        palette: paletas.ndvi
+      },
+      visible: false
+    },
+
+    Balance: {
+      img: app.balance.MapaBalance,
+      vis: {
+        min: -100,
+        max: 100,
+        palette: paletas.balance
+      },
+      visible: true
+    },
+
+    Deficit: {
+      img: app.balance.MapaDeficit,
+      vis: {
+        min: 0,
+        max: 100,
+        palette: paletas.deficit
+      },
+      visible: false
+    },
+
+    Exceso: {
+      img: app.balance.MapaExceso,
+      vis: {
+        min: 0,
+        max: 100,
+        palette: paletas.exceso
+      },
+      visible: false
+    },
+
+    HumedadSuelo: {
+      img: app.balance.HumedadSuelo,
+      vis: {
+        min: 0,
+        max: 1,
+        palette: paletas.humedad
+      },
+      visible: false
+    },
+
+    SemaforoGanadero: {
+      img: app.indicadores.SemaforoGanadero,
+      vis: {
+        min: 1,
+        max: 3,
+        palette: paletas.semaforo
+      },
+      visible: true
+    },
+
+    Biomasa: {
+      img: app.indicadores.Biomasa,
+      vis: {
+        min: 0,
+        max: 5000,
+        palette: ['white', 'lightgreen', 'green', 'darkgreen']
+      },
+      visible: false
+    },
+
+    RiesgoSequia: {
+      img: app.indicadores.RiesgoSequia,
+      vis: {
+        min: 0,
+        max: 1,
+        palette: ['green', 'yellow', 'orange', 'red']
+      },
+      visible: false
+    },
+
+    RiesgoBarro: {
+      img: app.indicadores.RiesgoBarro,
+      vis: {
+        min: 0,
+        max: 1,
+        palette: ['white', 'cyan', 'blue', 'purple']
+      },
+      visible: false
+    }
+  };
+
+  // ===============================
+  // AGREGAR CAPAS AL MAPA
+  // ===============================
+
+  Map.addLayer(
+    app.rgb,
+    {
+      min: 0,
+      max: 0.3,
+      bands: ['B4', 'B3', 'B2']
+    },
+    'RGB Sentinel-2',
+    true
+  );
+
+  Object.keys(capas).forEach(function(nombre) {
+    Map.addLayer(
+      capas[nombre].img,
+      capas[nombre].vis,
+      nombre,
+      capas[nombre].visible
+    );
+  });
+
+  // ===============================
+  // PANEL IZQUIERDO
+  // ===============================
+
+  var panelIzquierdo = panelIzquierdoGlobal;
+
+  if (!panelIzquierdo) {
+    panelIzquierdo = ui.Panel({
+      style: {
+        width: '370px',
+        padding: '8px'
+      }
+    });
+
+    panelIzquierdoGlobal = panelIzquierdo;
+  } else {
+    panelIzquierdo.clear();
+  }
+
+  panelIzquierdo.add(ui.Label({
+    value: 'Proyecto Ganadero',
+    style: {
+      fontSize: '22px',
+      fontWeight: 'bold',
+      margin: '0 0 8px 0'
+    }
+  }));
+
+  // Cajetines para fechas, AOI y área.
+  agregarControlesEstudio(panelIzquierdo, app);
+
+  panelIzquierdo.add(ui.Label({
+    value: 'Control de capas',
+    style: {
+      fontSize: '16px',
+      fontWeight: 'bold',
+      margin: '12px 0 6px 0'
+    }
+  }));
+
+  Object.keys(capas).forEach(function(nombre) {
+    var check = ui.Checkbox({
+      label: nombre,
+      value: capas[nombre].visible,
+      onChange: function(checked) {
+        Map.layers().forEach(function(layer) {
+          if (layer.getName() === nombre) {
+            layer.setShown(checked);
+          }
+        });
+      }
+    });
+
+    panelIzquierdo.add(check);
+  });
+
+  panelIzquierdo.add(ui.Label({
+    value: 'Exportaciones',
+    style: {
+      fontSize: '16px',
+      fontWeight: 'bold',
+      margin: '12px 0 6px 0'
+    }
+  }));
+
+  var botonExportarBalance = ui.Button({
+    label: 'Exportar Balance GeoTIFF',
+    style: {
+      stretch: 'horizontal'
+    },
+    onClick: function() {
+      Export.image.toDrive({
+        image: app.balance.MapaBalance,
+        description: 'MapaBalanceHidrico',
+        folder: 'GEE_Proyecto_Ganadero',
+        fileNamePrefix: 'balance_hidrico',
+        region: aoi,
+        scale: app.escala,
+        maxPixels: 1e13
+      });
+    }
+  });
+
+  var botonExportarCSV = ui.Button({
+    label: 'Exportar estadísticas CSV',
+    style: {
+      stretch: 'horizontal'
+    },
+    onClick: function() {
+      var imagenStats = ee.Image.cat([
+        app.ndvi,
+        app.balance.MapaBalance,
+        app.balance.MapaDeficit,
+        app.balance.MapaExceso,
+        app.balance.HumedadSuelo,
+        app.indicadores.SemaforoGanadero,
+        app.indicadores.Biomasa,
+        app.indicadores.CargaAnimalSugerida
+      ]);
+
+      var stats = imagenStats.reduceRegion({
+        reducer: ee.Reducer.mean(),
+        geometry: aoi,
+        scale: app.escala,
+        maxPixels: 1e13,
+        bestEffort: true
+      });
+
+      var areaHa = app.areaAOIHa || aoi.area(1).divide(10000);
+      var areaKm2 = app.areaAOIKm2 || areaHa.divide(100);
+
+      var featureStats = ee.Feature(null, stats)
+        .set('fecha_inicio', app.fechaInicio)
+        .set('fecha_final', app.fechaFinal)
+        .set('area_aoi_ha', areaHa)
+        .set('area_aoi_km2', areaKm2);
+
+      var fc = ee.FeatureCollection([
+        featureStats
+      ]);
+
+      Export.table.toDrive({
+        collection: fc,
+        description: 'EstadisticasGanaderas',
+        folder: 'GEE_Proyecto_Ganadero',
+        fileNamePrefix: 'estadisticas_ganaderas',
+        fileFormat: 'CSV'
+      });
+    }
+  });
+
+  panelIzquierdo.add(botonExportarBalance);
+  panelIzquierdo.add(botonExportarCSV);
+
+  // ===============================
+  // PANEL DERECHO
+  // ===============================
+
+  var panelDerecho = ui.Panel({
+    style: {
+      width: '390px',
+      padding: '8px',
+      position: 'top-right',
+      backgroundColor: 'rgba(255, 255, 255, 0.92)'
+    }
+  });
+
+  panelDerecho.add(ui.Label({
+    value: 'Gráficos y estadísticas',
+    style: {
+      fontSize: '18px',
+      fontWeight: 'bold',
+      margin: '0 0 8px 0'
+    }
+  }));
+
+  var chartNDVI = ui.Chart.image.histogram({
+    image: app.ndvi,
+    region: aoi,
+    scale: app.escala,
+    maxPixels: 1e13
+  }).setOptions({
+    title: 'Histograma NDVI',
+    hAxis: {
+      title: 'NDVI'
+    },
+    vAxis: {
+      title: 'Frecuencia'
+    },
+    legend: {
+      position: 'none'
+    }
+  });
+
+  panelDerecho.add(chartNDVI);
+
+  var chartBalance = ui.Chart.image.histogram({
+    image: app.balance.MapaBalance,
+    region: aoi,
+    scale: app.escala,
+    maxPixels: 1e13
+  }).setOptions({
+    title: 'Histograma Balance hídrico',
+    hAxis: {
+      title: 'mm'
+    },
+    vAxis: {
+      title: 'Frecuencia'
+    },
+    legend: {
+      position: 'none'
+    }
+  });
+
+  panelDerecho.add(chartBalance);
+
+  // ===============================
+  // INSPECTOR
+  // ===============================
+
+  panelDerecho.add(ui.Label({
+    value: 'Inspector',
+    style: {
+      fontSize: '15px',
+      fontWeight: 'bold',
+      margin: '12px 0 4px 0'
+    }
+  }));
+
+  var inspector = ui.Label('Click en el mapa para inspeccionar valores.');
+  panelDerecho.add(inspector);
+
+  Map.onClick(function(coords) {
+    var punto = ee.Geometry.Point([coords.lon, coords.lat]);
+
+    var imagenInspector = ee.Image.cat([
+      app.ndvi,
+      app.balance.MapaBalance,
+      app.balance.MapaDeficit,
+      app.balance.MapaExceso,
+      app.balance.HumedadSuelo,
+      app.indicadores.SemaforoGanadero,
+      app.indicadores.Biomasa,
+      app.indicadores.CargaAnimalSugerida
+    ]);
+
+    var valores = imagenInspector.reduceRegion({
+      reducer: ee.Reducer.first(),
+      geometry: punto,
+      scale: app.escala,
+      maxPixels: 1e13,
+      bestEffort: true
+    });
+
+    valores.evaluate(function(v) {
+      if (!v) {
+        inspector.setValue('Sin datos en este punto.');
+        return;
+      }
+
+      inspector.setValue(
+        'Lon: ' + coords.lon.toFixed(5) +
+        '\nLat: ' + coords.lat.toFixed(5) +
+        '\nNDVI: ' + formatoValor(v.NDVI) +
+        '\nBalance mm: ' + formatoValor(v.balance_hidrico_mm) +
+        '\nDéficit mm: ' + formatoValor(v.deficit_mm) +
+        '\nExceso mm: ' + formatoValor(v.exceso_mm) +
+        '\nHumedad suelo: ' + formatoValor(v.humedad_suelo_relativa) +
+        '\nSemáforo: ' + formatoValor(v.semaforo_ganadero) +
+        '\nBiomasa kg MS/ha: ' + formatoValor(v.biomasa_kg_ms_ha) +
+        '\nCarga UGG/ha: ' + formatoValor(v.carga_animal_sugerida_UGG_ha)
+      );
+    });
+  });
+
+  // ===============================
+  // LEYENDA
+  // ===============================
+
+  var leyenda = ui.Panel({
+    style: {
+      position: 'bottom-left',
+      padding: '8px',
+      backgroundColor: 'rgba(255,255,255,0.9)'
+    }
+  });
+
+  leyenda.add(ui.Label({
+    value: 'Semáforo ganadero',
+    style: {
+      fontWeight: 'bold'
+    }
+  }));
+
+  leyenda.add(crearFilaLeyenda('red', '1 - Crítico'));
+  leyenda.add(crearFilaLeyenda('yellow', '2 - Precaución'));
+  leyenda.add(crearFilaLeyenda('green', '3 - Favorable'));
+
+  Map.add(leyenda);
+
+  // ===============================
+  // AGREGAR PANELES
+  // ===============================
+
+  if (!panelIzquierdoInsertado) {
+    ui.root.insert(0, panelIzquierdo);
+    panelIzquierdoInsertado = true;
+  }
+
+  Map.add(panelDerecho);
+}
+
+
+// =======================================================
+// EXPORTACIÓN DEL MÓDULO
+// =======================================================
+
+exports.construirInterfaz = construirInterfaz;
+
+
+// =======================================================
+// CONTROLES DE FECHA, AOI Y ÁREA
+// =======================================================
+
+function agregarControlesEstudio(panel, app) {
+  panel.add(ui.Label({
+    value: 'Configuración del estudio',
+    style: {
+      fontSize: '16px',
+      fontWeight: 'bold',
+      margin: '10px 0 6px 0'
+    }
+  }));
+
+  // =====================================================
+  // MOSTRAR ÁREA DEL AOI ACTUAL
+  // =====================================================
+
+  var areaLabel = ui.Label({
+    value: 'Área AOI: calculando...',
+    style: {
+      whiteSpace: 'pre',
+      fontSize: '13px',
+      color: '#0b5394',
+      fontWeight: 'bold',
+      margin: '4px 0 8px 0'
+    }
+  });
+
+  panel.add(areaLabel);
+
+  var areaHa = app.areaAOIHa || app.aoi.area(1).divide(10000);
+  var areaKm2 = app.areaAOIKm2 || areaHa.divide(100);
+
+  ee.Dictionary({
+    ha: areaHa,
+    km2: areaKm2
+  }).evaluate(function(area) {
+    if (!area) {
+      areaLabel.setValue('Área AOI: sin dato');
+      return;
+    }
+
+    areaLabel.setValue(
+      'Área AOI actual:\n' +
+      area.ha.toFixed(2) + ' ha\n' +
+      area.km2.toFixed(4) + ' km²'
+    );
+  });
+
+  // =====================================================
+  // FECHAS
+  // =====================================================
+
+  var fechaInicioBox = ui.Textbox({
+    placeholder: 'YYYY-MM-DD',
+    value: app.fechaInicio,
+    style: {
+      stretch: 'horizontal'
+    }
+  });
+
+  var fechaFinalBox = ui.Textbox({
+    placeholder: 'YYYY-MM-DD',
+    value: app.fechaFinal,
+    style: {
+      stretch: 'horizontal'
+    }
+  });
+
+  panel.add(ui.Label('Fecha inicio'));
+  panel.add(fechaInicioBox);
+
+  panel.add(ui.Label('Fecha final'));
+  panel.add(fechaFinalBox);
+
+  // =====================================================
+  // AOI
+  // =====================================================
+
+  panel.add(ui.Label({
+    value: 'AOI / Polígono de finca',
+    style: {
+      fontWeight: 'bold',
+      margin: '10px 0 4px 0'
+    }
+  }));
+
+  panel.add(ui.Label({
+    value:
+      'Puedes dibujar el polígono en el mapa o pegar coordenadas / asset.\n' +
+      'Después de cambiar los datos, presiona "Actualizar análisis".',
+    style: {
+      whiteSpace: 'pre',
+      fontSize: '12px',
+      color: '#555555',
+      margin: '4px 0 8px 0'
+    }
+  }));
+
+  var aoiBox = ui.Textbox({
+    placeholder:
+      'Coordenadas: [[[-74.2,4.9],[-74.2,4.5],[-73.7,4.5],[-73.7,4.9],[-74.2,4.9]]]\n' +
+      'Asset: users/oasotob/fincas/mi_finca',
+    value: '',
+    style: {
+      stretch: 'horizontal'
+    }
+  });
+
+  panel.add(aoiBox);
+
+  var estado = ui.Label({
+    value: 'AOI actual: configuración inicial o último análisis actualizado.',
+    style: {
+      color: 'gray',
+      margin: '4px 0 8px 0',
+      whiteSpace: 'pre'
+    }
+  });
+
+  panel.add(estado);
+
+  var botonDibujar = ui.Button({
+    label: 'Dibujar finca en el mapa',
+    style: {
+      stretch: 'horizontal'
+    },
+    onClick: function() {
+      prepararDibujoPoligono();
+
+      estado.setValue(
+        'Dibuja el polígono de la finca y luego presiona "Actualizar análisis".'
+      );
+
+      estado.style().set('color', 'blue');
+    }
+  });
+
+  var botonLimpiarDibujo = ui.Button({
+    label: 'Limpiar dibujo',
+    style: {
+      stretch: 'horizontal'
+    },
+    onClick: function() {
+      limpiarDibujos();
+
+      estado.setValue('Dibujo eliminado. Puedes dibujar otro polígono.');
+      estado.style().set('color', 'gray');
+    }
+  });
+
+  var botonActualizar = ui.Button({
+    label: 'Actualizar análisis',
+    style: {
+      stretch: 'horizontal',
+      color: 'red',
+      backgroundColor: 'white',
+      fontWeight: 'bold',
+      margin: '8px 0 8px 0'
+    },
+    onClick: function() {
+      var nuevaFechaInicio = fechaInicioBox.getValue();
+      var nuevaFechaFinal = fechaFinalBox.getValue();
+
+      if (!validarFecha(nuevaFechaInicio) || !validarFecha(nuevaFechaFinal)) {
+        estado.setValue('Error: usa fechas válidas con formato YYYY-MM-DD.');
+        estado.style().set('color', 'red');
+        return;
+      }
+
+      if (!fechaFinalMayorIgual(nuevaFechaInicio, nuevaFechaFinal)) {
+        estado.setValue('Error: la fecha final debe ser igual o posterior a la fecha inicial.');
+        estado.style().set('color', 'red');
+        return;
+      }
+
+      var nuevoAOI = null;
+      var origenAOI = '';
+      var textoAOI = aoiBox.getValue();
+
+      // ---------------------------------------------------
+      // 1. AOI desde cajetín
+      // ---------------------------------------------------
+      if (textoAOI && textoAOI.trim() !== '') {
+        try {
+          nuevoAOI = obtenerAOIDesdeTexto(textoAOI);
+          origenAOI = 'AOI cargado desde cajetín';
+        } catch (err) {
+          estado.setValue('Error leyendo AOI. Revisa coordenadas o ruta de asset.');
+          estado.style().set('color', 'red');
+          print('Error AOI cajetín:', err);
+          return;
+        }
+      }
+
+      // ---------------------------------------------------
+      // 2. AOI dibujado en mapa
+      // ---------------------------------------------------
+      if (!nuevoAOI) {
+        nuevoAOI = obtenerAOIDibujado();
+
+        if (nuevoAOI) {
+          origenAOI = 'AOI dibujado en el mapa';
+        }
+      }
+
+      // ---------------------------------------------------
+      // 3. Si no se ingresó AOI nuevo, usar AOI actual
+      // ---------------------------------------------------
+      if (!nuevoAOI) {
+        nuevoAOI = app.aoi;
+        origenAOI = 'AOI actual previamente cargado';
+      }
+
+      if (!app.onActualizar) {
+        estado.setValue('Error: main.js no envió la función onActualizar.');
+        estado.style().set('color', 'red');
+        return;
+      }
+
+      var areaNuevaHa = nuevoAOI.area(1).divide(10000);
+      var areaNuevaKm2 = areaNuevaHa.divide(100);
+
+      estado.setValue(
+        'Actualizando análisis...\n' +
+        'Inicio: ' + nuevaFechaInicio + '\n' +
+        'Final: ' + nuevaFechaFinal + '\n' +
+        origenAOI
+      );
+
+      estado.style().set('color', 'green');
+
+      print('--------------------------------------');
+      print('ACTUALIZAR ANÁLISIS PRESIONADO');
+      print('Fecha inicio seleccionada:', nuevaFechaInicio);
+      print('Fecha final seleccionada:', nuevaFechaFinal);
+      print('Origen AOI:', origenAOI);
+      print('AOI usado:', nuevoAOI);
+      print('Área AOI ha:', areaNuevaHa);
+      print('Área AOI km²:', areaNuevaKm2);
+      print('--------------------------------------');
+
+      // Limpiar el dibujo editable.
+      // El AOI quedará agregado como capa AOI_Finca,
+      // apagada por defecto, en el control de capas.
+      limpiarDibujos();
+
+      app.onActualizar({
+        aoi: nuevoAOI,
+        fechaInicio: nuevaFechaInicio,
+        fechaFinal: nuevaFechaFinal
+      });
+    }
+  });
+
+  panel.add(botonDibujar);
+  panel.add(botonLimpiarDibujo);
+  panel.add(botonActualizar);
+
+  panel.add(ui.Label({
+    value:
+      'Nota: al actualizar, el polígono usado aparecerá como capa "AOI_Finca" ' +
+      'en el control de capas, apagada por defecto.',
+    style: {
+      fontSize: '11px',
+      color: 'gray',
+      margin: '6px 0 10px 0'
+    }
+  }));
+}
+
+
+// =======================================================
+// DIBUJO DE POLÍGONO
+// =======================================================
+
+function prepararDibujoPoligono() {
+  var drawingTools = Map.drawingTools();
+
+  drawingTools.setShown(true);
+
+  while (drawingTools.layers().length() > 0) {
+    var layer = drawingTools.layers().get(0);
+    drawingTools.layers().remove(layer);
+  }
+
+  drawingTools.setShape('polygon');
+  drawingTools.draw();
+}
+
+
+function limpiarDibujos() {
+  var drawingTools = Map.drawingTools();
+
+  while (drawingTools.layers().length() > 0) {
+    var layer = drawingTools.layers().get(0);
+    drawingTools.layers().remove(layer);
+  }
+}
+
+
+function obtenerAOIDibujado() {
+  var drawingTools = Map.drawingTools();
+
+  if (drawingTools.layers().length() === 0) {
+    return null;
+  }
+
+  var layer = drawingTools.layers().get(0);
+  var geom = layer.getEeObject();
+
+  if (!geom) {
+    return null;
+  }
+
+  return ee.Geometry(geom);
+}
+
+
+// =======================================================
+// LECTURA DE AOI DESDE TEXTO
+// =======================================================
+
+function obtenerAOIDesdeTexto(texto) {
+  texto = texto.trim();
+
+  // Caso asset de Earth Engine:
+  // users/usuario/asset
+  // projects/proyecto/assets/asset
+  if (
+    texto.indexOf('users/') === 0 ||
+    texto.indexOf('projects/') === 0
+  ) {
+    return ee.FeatureCollection(texto).geometry();
+  }
+
+  // Caso coordenadas o GeoJSON.
+  var obj = JSON.parse(texto);
+
+  // GeoJSON FeatureCollection
+  if (obj.type === 'FeatureCollection') {
+    return ee.FeatureCollection(obj).geometry();
+  }
+
+  // GeoJSON Feature
+  if (obj.type === 'Feature') {
+    obj = obj.geometry;
+  }
+
+  // GeoJSON Polygon
+  if (obj.type === 'Polygon') {
+    return ee.Geometry.Polygon(obj.coordinates);
+  }
+
+  // GeoJSON MultiPolygon
+  if (obj.type === 'MultiPolygon') {
+    return ee.Geometry.MultiPolygon(obj.coordinates);
+  }
+
+  // Coordenadas directas:
+  // [[[-74.2,4.9],[-74.2,4.5],[-73.7,4.5],[-73.7,4.9],[-74.2,4.9]]]
+  if (Array.isArray(obj)) {
+    return ee.Geometry.Polygon(obj);
+  }
+
+  throw new Error('Formato de AOI no reconocido.');
+}
+
+
+// =======================================================
+// FUNCIONES AUXILIARES DE UI
+// =======================================================
+
+function crearFilaLeyenda(color, texto) {
+  var cajaColor = ui.Label({
+    style: {
+      backgroundColor: color,
+      padding: '8px',
+      margin: '0 4px 4px 0'
+    }
+  });
+
+  var etiqueta = ui.Label({
+    value: texto,
+    style: {
+      margin: '0 0 4px 0'
+    }
+  });
+
+  return ui.Panel({
+    widgets: [cajaColor, etiqueta],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+}
+
+
+function formatoValor(valor) {
+  if (valor === null || valor === undefined) {
+    return 'Sin dato';
+  }
+
+  if (typeof valor === 'number') {
+    return valor.toFixed(3);
+  }
+
+  return valor;
+}
+
+
+function validarFecha(fecha) {
+  var patron = /^\d{4}-\d{2}-\d{2}$/;
+  return patron.test(fecha);
+}
+
+
+function fechaFinalMayorIgual(fechaInicio, fechaFinal) {
+  var inicio = new Date(fechaInicio);
+  var final = new Date(fechaFinal);
+
+  return final.getTime() >= inicio.getTime();
+}

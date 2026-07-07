@@ -1,0 +1,112 @@
+var DEM_ID = 'COPERNICUS/DEM/GLO30';
+
+function obtenerDEM(aoi) {
+  var col = ee.ImageCollection(DEM_ID).filterBounds(aoi);
+  var proj = col.first().projection();
+
+  return col
+    .mosaic()
+    .setDefaultProjection(proj)
+    .select('DEM')
+    .rename('elevacion_m')
+    .clip(aoi);
+}
+
+exports.DEM = obtenerDEM;
+
+exports.Pendiente = function(aoi) {
+  return ee.Terrain.slope(obtenerDEM(aoi))
+    .rename('pendiente_grados')
+    .clip(aoi);
+};
+
+exports.Aspecto = function(aoi) {
+  return ee.Terrain.aspect(obtenerDEM(aoi))
+    .rename('aspecto_grados')
+    .clip(aoi);
+};
+
+exports.Curvatura = function(aoi) {
+  var dem = obtenerDEM(aoi);
+
+  var kernel = ee.Kernel.fixed(3, 3, [
+    [0, 1, 0],
+    [1, -4, 1],
+    [0, 1, 0]
+  ]);
+
+  return dem.convolve(kernel)
+    .rename('curvatura')
+    .clip(aoi);
+};
+
+// Aproximación simple. Para hidrología formal se recomienda MERIT Hydro/HydroSHEDS.
+exports.Acumulacion = function(aoi) {
+  var pendiente = exports.Pendiente(aoi);
+
+  return pendiente.multiply(-1)
+    .unitScale(-45, 0)
+    .rename('acumulacion_relativa')
+    .clip(aoi);
+};
+
+exports.DireccionFlujo = function(aoi) {
+  // Aproximación usando aspecto
+  return exports.Aspecto(aoi)
+    .rename('direccion_flujo_aprox')
+    .clip(aoi);
+};
+
+exports.Cuencas = function(aoi) {
+  var acumulacion = exports.Acumulacion(aoi);
+
+  return acumulacion.gt(0.65)
+    .selfMask()
+    .connectedComponents({
+      connectedness: ee.Kernel.plus(1),
+      maxSize: 512
+    })
+    .select('labels')
+    .rename('cuencas_aprox')
+    .clip(aoi);
+};
+
+exports.RedDrenaje = function(aoi) {
+  return exports.Acumulacion(aoi)
+    .gt(0.75)
+    .selfMask()
+    .rename('red_drenaje_aprox')
+    .clip(aoi);
+};
+
+exports.IndiceTopografico = function(aoi) {
+  var acumulacion = exports.Acumulacion(aoi).add(1);
+  var pendienteRad = exports.Pendiente(aoi)
+    .multiply(Math.PI / 180)
+    .tan()
+    .max(0.001);
+
+  return acumulacion.divide(pendienteRad)
+    .log()
+    .rename('indice_topografico')
+    .clip(aoi);
+};
+
+exports.TWI = function(aoi) {
+  return exports.IndiceTopografico(aoi)
+    .rename('TWI')
+    .clip(aoi);
+};
+
+exports.LSFactor = function(aoi) {
+  var pendiente = exports.Pendiente(aoi);
+  var slopeRad = pendiente.multiply(Math.PI / 180);
+  var sinSlope = slopeRad.sin();
+
+  // Factor LS aproximado RUSLE
+  var ls = sinSlope.divide(0.0896).pow(1.3)
+    .multiply(1.4)
+    .rename('LS_factor');
+
+  return ls.clip(aoi);
+};

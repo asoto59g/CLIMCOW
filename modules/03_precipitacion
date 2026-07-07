@@ -1,0 +1,424 @@
+/**** modules/03_precipitacion.js ****/
+
+// =======================================================
+// MÓDULO 03 - PRECIPITACIÓN OBSERVADA
+// Fuentes:
+// - CHIRPS DAILY
+// - NASA GPM IMERG V07
+//
+// Funciones:
+// - lluviaAcumulada()
+// - anomalia()
+// - diasSecos()
+// - SPI()
+// - percentiles()
+// - comparacionHistorica()
+//
+// Modo recomendado:
+// - fuente = 'AUTO'
+//   Usa CHIRPS si tiene datos.
+//   Si CHIRPS está vacío, usa IMERG.
+//   Si ambas están vacías, devuelve lluvia 0 mm con banda válida.
+// =======================================================
+
+
+// ===============================
+// DATASETS
+// ===============================
+
+var CHIRPS_ID = 'UCSB-CHG/CHIRPS/DAILY';
+var IMERG_ID = 'NASA/GPM_L3/IMERG_V07';
+
+
+// =======================================================
+// FUNCIONES AUXILIARES
+// =======================================================
+
+// Imagen constante de lluvia 0 mm.
+// Se usa como fallback para evitar imágenes con 0 bandas.
+function lluviaCero(aoi) {
+  return ee.Image.constant(0)
+    .rename('lluvia_acumulada_mm')
+    .clip(aoi)
+    .set('fuente_lluvia_real', 'SIN_DATOS')
+    .set('n_imagenes_lluvia', 0);
+}
+
+
+// CHIRPS DAILY.
+// Banda precipitation en mm/día.
+// Para acumulado simplemente se suma.
+function coleccionCHIRPSmm(aoi, fechaInicio, fechaFinal) {
+  return ee.ImageCollection(CHIRPS_ID)
+    .filterBounds(aoi)
+    .filterDate(fechaInicio, fechaFinal)
+    .select('precipitation')
+    .map(function(img) {
+      return img
+        .rename('precip_mm')
+        .copyProperties(img, img.propertyNames());
+    });
+}
+
+
+// IMERG V07.
+// Banda precipitation en mm/hr.
+// Resolución temporal: 30 minutos.
+// Para acumular mm por imagen:
+// mm/hr * 0.5 h = mm cada 30 min.
+function coleccionIMERGmm(aoi, fechaInicio, fechaFinal) {
+  return ee.ImageCollection(IMERG_ID)
+    .filterBounds(aoi)
+    .filterDate(fechaInicio, fechaFinal)
+    .select('precipitation')
+    .map(function(img) {
+      return img
+        .multiply(0.5)
+        .rename('precip_mm')
+        .copyProperties(img, img.propertyNames());
+    });
+}
+
+
+// Colección según fuente.
+// fuente:
+//   'CHIRPS'
+//   'IMERG'
+//   'AUTO'
+function obtenerColeccionLluvia(aoi, fechaInicio, fechaFinal, fuente) {
+  fuente = fuente || 'AUTO';
+
+  var chirps = coleccionCHIRPSmm(aoi, fechaInicio, fechaFinal);
+  var imerg = coleccionIMERGmm(aoi, fechaInicio, fechaFinal);
+
+  if (fuente === 'CHIRPS') {
+    return chirps;
+  }
+
+  if (fuente === 'IMERG') {
+    return imerg;
+  }
+
+  // AUTO:
+  // Si CHIRPS tiene datos, usar CHIRPS.
+  // Si CHIRPS está vacío, usar IMERG.
+  return ee.ImageCollection(
+    ee.Algorithms.If(
+      chirps.size().gt(0),
+      chirps,
+      imerg
+    )
+  );
+}
+
+
+// Devuelve texto de fuente real usada.
+// Esto se guarda como propiedad del resultado.
+function obtenerFuenteReal(aoi, fechaInicio, fechaFinal, fuente) {
+  fuente = fuente || 'AUTO';
+
+  var nChirps = coleccionCHIRPSmm(aoi, fechaInicio, fechaFinal).size();
+  var nImerg = coleccionIMERGmm(aoi, fechaInicio, fechaFinal).size();
+
+  if (fuente === 'CHIRPS') {
+    return ee.String(
+      ee.Algorithms.If(
+        nChirps.gt(0),
+        'CHIRPS',
+        'CHIRPS_SIN_DATOS'
+      )
+    );
+  }
+
+  if (fuente === 'IMERG') {
+    return ee.String(
+      ee.Algorithms.If(
+        nImerg.gt(0),
+        'IMERG',
+        'IMERG_SIN_DATOS'
+      )
+    );
+  }
+
+  return ee.String(
+    ee.Algorithms.If(
+      nChirps.gt(0),
+      'CHIRPS',
+      ee.Algorithms.If(
+        nImerg.gt(0),
+        'IMERG',
+        'SIN_DATOS'
+      )
+    )
+  );
+}
+
+
+// =======================================================
+// FUNCIÓN PRINCIPAL: LLUVIA ACUMULADA
+// =======================================================
+
+exports.lluviaAcumulada = function(aoi, fechaInicio, fechaFinal, fuente) {
+  fuente = fuente || 'AUTO';
+
+  var col = obtenerColeccionLluvia(
+    aoi,
+    fechaInicio,
+    fechaFinal,
+    fuente
+  );
+
+  var fuenteReal = obtenerFuenteReal(
+    aoi,
+    fechaInicio,
+    fechaFinal,
+    fuente
+  );
+
+  var lluvia = ee.Image(
+    ee.Algorithms.If(
+      col.size().gt(0),
+      col.sum()
+        .rename('lluvia_acumulada_mm')
+        .clip(aoi)
+        .set('fuente_lluvia_real', fuenteReal)
+        .set('fuente_lluvia_solicitada', fuente)
+        .set('n_imagenes_lluvia', col.size()),
+      lluviaCero(aoi)
+        .set('fuente_lluvia_real', fuenteReal)
+        .set('fuente_lluvia_solicitada', fuente)
+    )
+  );
+
+  return lluvia
+    .rename('lluvia_acumulada_mm')
+    .clip(aoi);
+};
+
+
+// =======================================================
+// ANOMALÍA DE LLUVIA
+// Usa CHIRPS histórico.
+// Recomendado para periodos dentro del rango histórico CHIRPS.
+// =======================================================
+
+exports.anomalia = function(
+  aoi,
+  fechaInicio,
+  fechaFinal,
+  anioInicioHist,
+  anioFinalHist
+) {
+  anioInicioHist = anioInicioHist || 1981;
+  anioFinalHist = anioFinalHist || 2024;
+
+  var actual = exports.lluviaAcumulada(
+    aoi,
+    fechaInicio,
+    fechaFinal,
+    'AUTO'
+  );
+
+  var inicio = ee.Date(fechaInicio);
+  var fin = ee.Date(fechaFinal);
+
+  var mesInicio = inicio.get('month');
+  var diaInicio = inicio.get('day');
+  var mesFin = fin.get('month');
+  var diaFin = fin.get('day');
+
+  var years = ee.List.sequence(anioInicioHist, anioFinalHist);
+
+  var historicos = ee.ImageCollection.fromImages(
+    years.map(function(y) {
+      y = ee.Number(y);
+
+      var fi = ee.Date.fromYMD(y, mesInicio, diaInicio);
+      var ff = ee.Date.fromYMD(y, mesFin, diaFin);
+
+      return exports.lluviaAcumulada(aoi, fi, ff, 'CHIRPS')
+        .rename('lluvia_hist_mm')
+        .set('year', y);
+    })
+  );
+
+  var mediaHist = historicos.mean();
+
+  return actual
+    .subtract(mediaHist)
+    .rename('anomalia_lluvia_mm')
+    .clip(aoi);
+};
+
+
+// =======================================================
+// DÍAS SECOS
+// Solo aplica de forma natural a CHIRPS diario.
+// Si necesitas días secos recientes con IMERG, habría que
+// agregar acumulación diaria desde datos 30-min.
+// =======================================================
+
+exports.diasSecos = function(aoi, fechaInicio, fechaFinal, umbralMM) {
+  umbralMM = umbralMM || 1;
+
+  var col = coleccionCHIRPSmm(aoi, fechaInicio, fechaFinal);
+
+  var diasSecos = ee.Image(
+    ee.Algorithms.If(
+      col.size().gt(0),
+      col.map(function(img) {
+          return img.lt(umbralMM).rename('dia_seco');
+        })
+        .sum()
+        .rename('dias_secos'),
+      ee.Image.constant(0).rename('dias_secos')
+    )
+  );
+
+  return diasSecos.clip(aoi);
+};
+
+
+// =======================================================
+// SPI SIMPLIFICADO
+// z-score de precipitación acumulada frente a histórico.
+// =======================================================
+
+exports.SPI = function(
+  aoi,
+  fechaInicio,
+  fechaFinal,
+  anioInicioHist,
+  anioFinalHist
+) {
+  anioInicioHist = anioInicioHist || 1981;
+  anioFinalHist = anioFinalHist || 2024;
+
+  var inicio = ee.Date(fechaInicio);
+  var fin = ee.Date(fechaFinal);
+
+  var mesInicio = inicio.get('month');
+  var diaInicio = inicio.get('day');
+  var mesFin = fin.get('month');
+  var diaFin = fin.get('day');
+
+  var years = ee.List.sequence(anioInicioHist, anioFinalHist);
+
+  var historicos = ee.ImageCollection.fromImages(
+    years.map(function(y) {
+      y = ee.Number(y);
+
+      return exports.lluviaAcumulada(
+        aoi,
+        ee.Date.fromYMD(y, mesInicio, diaInicio),
+        ee.Date.fromYMD(y, mesFin, diaFin),
+        'CHIRPS'
+      )
+      .rename('lluvia_hist_mm')
+      .set('year', y);
+    })
+  );
+
+  var actual = exports.lluviaAcumulada(
+    aoi,
+    fechaInicio,
+    fechaFinal,
+    'AUTO'
+  );
+
+  var media = historicos.mean();
+  var desv = historicos.reduce(ee.Reducer.stdDev());
+
+  return actual
+    .subtract(media)
+    .divide(desv.max(0.001))
+    .rename('SPI')
+    .clip(aoi);
+};
+
+
+// =======================================================
+// PERCENTILES
+// Percentiles diarios de CHIRPS en el periodo solicitado.
+// =======================================================
+
+exports.percentiles = function(aoi, fechaInicio, fechaFinal, percentiles) {
+  percentiles = percentiles || [10, 25, 50, 75, 90];
+
+  var col = coleccionCHIRPSmm(aoi, fechaInicio, fechaFinal);
+
+  var pct = ee.Image(
+    ee.Algorithms.If(
+      col.size().gt(0),
+      col.reduce(ee.Reducer.percentile(percentiles)),
+      ee.Image.constant(0).rename('percentil_sin_datos')
+    )
+  );
+
+  return pct.clip(aoi);
+};
+
+
+// =======================================================
+// COMPARACIÓN HISTÓRICA
+// =======================================================
+
+exports.comparacionHistorica = function(aoi, fechaInicio, fechaFinal) {
+  return {
+    acumulada: exports.lluviaAcumulada(
+      aoi,
+      fechaInicio,
+      fechaFinal,
+      'AUTO'
+    ),
+
+    anomalia: exports.anomalia(
+      aoi,
+      fechaInicio,
+      fechaFinal,
+      1981,
+      2024
+    ),
+
+    spi: exports.SPI(
+      aoi,
+      fechaInicio,
+      fechaFinal,
+      1981,
+      2024
+    ),
+
+    diasSecos: exports.diasSecos(
+      aoi,
+      fechaInicio,
+      fechaFinal,
+      1
+    )
+  };
+};
+
+
+// =======================================================
+// DIAGNÓSTICO OPCIONAL
+// Devuelve tamaños de colecciones para imprimir en main.
+// =======================================================
+
+exports.diagnostico = function(aoi, fechaInicio, fechaFinal) {
+  var chirps = coleccionCHIRPSmm(aoi, fechaInicio, fechaFinal);
+  var imerg = coleccionIMERGmm(aoi, fechaInicio, fechaFinal);
+
+  return {
+    nCHIRPS: chirps.size(),
+    nIMERG: imerg.size(),
+
+    ultimaFechaCHIRPS: ee.Date(
+      ee.ImageCollection(CHIRPS_ID)
+        .aggregate_max('system:time_start')
+    ),
+
+    ultimaFechaIMERG: ee.Date(
+      ee.ImageCollection(IMERG_ID)
+        .aggregate_max('system:time_start')
+    )
+  };
+};

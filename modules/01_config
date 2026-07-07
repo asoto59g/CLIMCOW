@@ -1,0 +1,71 @@
+// ===============================
+// CONFIGURACIÓN GENERAL DEL PROYECTO
+// ===============================
+
+// Reemplaza este AOI por tu asset o geometría real.
+// Ejemplo con polígono manual.
+var AOI = ee.Geometry.Polygon([
+  [
+    [-85.48133017669767, 10.799371646341468],
+          [-85.48081519256681, 10.806622267605603],
+          [-85.4778969491586, 10.8138727137328],
+          [-85.47549368988126, 10.81842522988027],
+          [-85.47806861053556, 10.825338177770197],
+          [-85.48064353118986, 10.82938470741604],
+          [-85.47772528778165, 10.8330939782342],
+          [-85.48081519256681, 10.8356230001742],
+          [-85.48407675872892, 10.838152000747781],
+          [-85.48630835662931, 10.83579160087722],
+          [-85.48836829315275, 10.833262580361511],
+          [-85.49059989105314, 10.833262580361511],
+          [-85.49386145721525, 10.833599784331293],
+          [-85.49506308685392, 10.83090214194017],
+          [-85.49489142547696, 10.825169571182197],
+          [-85.49386145721525, 10.818762450549213],
+          [-85.49231650482267, 10.812861034093578],
+          [-85.48991324554532, 10.80746535173719],
+          [-85.48613669525236, 10.803587145126128],
+          [-85.48287512909025, 10.804093001003558]
+  ]
+]);
+
+var fechaInicio = '2026-01-01';
+var fechaFinal = '2026-07-01';
+
+// Escalas recomendadas:
+// Sentinel-2: 10 m
+// Sentinel-1: 10 m
+// DEM Copernicus: 30 m
+// CHIRPS: ~5 km
+// SoilGrids/OpenLandMap: 250 m
+var escala = 30;
+
+// Parámetros ganaderos ajustables
+var parametros = {
+  umbralNDVIBajo: 0.35,
+  umbralNDVIMedio: 0.55,
+  ndviOptimo: 0.75,
+  deficitCriticoMM: 40,
+  excesoCriticoMM: 60,
+  cargaBaseUGGHa: 1.0,
+  profundidadRaizMM: 500
+};
+
+// Paletas comunes
+var paletas = {
+  ndvi: ['brown', 'yellow', 'green'],
+  deficit: ['white', 'orange', 'red', 'darkred'],
+  exceso: ['white', 'cyan', 'blue', 'darkblue'],
+  balance: ['red', 'orange', 'white', 'cyan', 'blue'],
+  suelo: ['fff7bc', 'fec44f', 'd95f0e', '993404'],
+  pendiente: ['white', 'yellow', 'orange', 'red'],
+  humedad: ['red', 'orange', 'yellow', 'green', 'blue'],
+  semaforo: ['red', 'yellow', 'green']
+};
+
+exports.AOI = AOI;
+exports.fechaInicio = fechaInicio;
+exports.fechaFinal = fechaFinal;
+exports.escala = escala;
+exports.parametros = parametros;
+exports.paletas = paletas;

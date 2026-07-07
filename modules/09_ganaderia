@@ -1,0 +1,122 @@
+exports.generarIndicadores = function(inputs) {
+  var aoi = inputs.aoi;
+  var ndvi = inputs.ndvi;
+  var lai = inputs.lai;
+  var cobertura = inputs.coberturaVegetal;
+  var balance = inputs.balance.MapaBalance;
+  var deficit = inputs.balance.MapaDeficit;
+  var exceso = inputs.balance.MapaExceso;
+  var humedadSuelo = inputs.balance.HumedadSuelo;
+  var temp = inputs.pronostico7.temperatura;
+  var humedadRel = inputs.pronostico7.humedad;
+  var aguaDisponible = inputs.balance.AguaDisponible;
+
+  // Condición del pasto: 1 mala, 2 media, 3 buena
+  var condicionPasto = ee.Image(1)
+    .where(ndvi.gte(0.35).and(ndvi.lt(0.55)), 2)
+    .where(ndvi.gte(0.55), 3)
+    .rename('condicion_pasto');
+
+  // Biomasa simplificada kg MS/ha
+  var biomasa = ndvi.expression(
+    'max(0, 6500 * NDVI - 1200)',
+    {
+      NDVI: ndvi
+    }
+  )
+  .rename('biomasa_kg_ms_ha');
+
+  var estresHidrico = deficit.unitScale(0, 80)
+    .clamp(0, 1)
+    .rename('estres_hidrico');
+
+  var riesgoSequia = deficit
+    .multiply(0.6)
+    .add(ndvi.multiply(-40).add(40).multiply(0.4))
+    .unitScale(0, 80)
+    .clamp(0, 1)
+    .rename('riesgo_sequia');
+
+  var riesgoBarro = exceso.unitScale(0, 80)
+    .add(humedadSuelo.unitScale(0.5, 1).clamp(0, 1))
+    .divide(2)
+    .clamp(0, 1)
+    .rename('riesgo_barro');
+
+  var disponibilidadAgua = aguaDisponible
+    .subtract(deficit)
+    .max(0)
+    .rename('disponibilidad_agua_mm');
+
+  var cargaAnimal = biomasa
+    .divide(3500)
+    .multiply(cobertura)
+    .clamp(0, 3)
+    .rename('carga_animal_sugerida_UGG_ha');
+
+  // Índice de calor tipo THI simplificado
+  var thi = temp.expression(
+    'T - ((0.55 - 0.0055 * RH) * (T - 14.5))',
+    {
+      T: temp,
+      RH: humedadRel
+    }
+  )
+  .rename('indice_calor_THI');
+
+  var confortAnimal = ee.Image(1)
+    .where(thi.gte(72).and(thi.lt(78)), 2)
+    .where(thi.gte(78), 3)
+    .rename('indice_confort_animal');
+  // 1 confortable, 2 alerta, 3 estrés
+
+  var disponibilidadForraje = biomasa
+    .multiply(cobertura)
+    .rename('disponibilidad_forraje_kg_ms_ha');
+
+  var produccionPotencial = disponibilidadForraje
+    .multiply(humedadSuelo)
+    .multiply(0.001)
+    .rename('produccion_potencial_relativa');
+
+  // Clasificación de potreros:
+  // 1 crítico, 2 recuperación, 3 productivo
+  var clasificacionPotreros = ee.Image(1)
+    .where(ndvi.gte(0.35).and(deficit.lt(60)), 2)
+    .where(ndvi.gte(0.55).and(deficit.lt(30)).and(riesgoBarro.lt(0.5)), 3)
+    .rename('clasificacion_potreros');
+
+  // Semáforo:
+  // 1 rojo, 2 amarillo, 3 verde
+  var semaforo = ee.Image(1)
+    .where(
+      ndvi.gte(0.35)
+        .and(deficit.lt(60))
+        .and(riesgoBarro.lt(0.7)),
+      2
+    )
+    .where(
+      ndvi.gte(0.55)
+        .and(deficit.lt(30))
+        .and(riesgoBarro.lt(0.4))
+        .and(thi.lt(78)),
+      3
+    )
+    .rename('semaforo_ganadero');
+
+  return {
+    CondicionPasto: condicionPasto.clip(aoi),
+    Biomasa: biomasa.clip(aoi),
+    EstresHidrico: estresHidrico.clip(aoi),
+    RiesgoSequia: riesgoSequia.clip(aoi),
+    RiesgoBarro: riesgoBarro.clip(aoi),
+    DisponibilidadAgua: disponibilidadAgua.clip(aoi),
+    CargaAnimalSugerida: cargaAnimal.clip(aoi),
+    IndiceConfortAnimal: confortAnimal.clip(aoi),
+    IndiceCalor: thi.clip(aoi),
+    DisponibilidadForraje: disponibilidadForraje.clip(aoi),
+    ProduccionPotencial: produccionPotencial.clip(aoi),
+    ClasificacionPotreros: clasificacionPotreros.clip(aoi),
+    SemaforoGanadero: semaforo.clip(aoi)
+  };
+};

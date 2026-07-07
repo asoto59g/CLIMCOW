@@ -1,0 +1,135 @@
+var ECMWF_ID = 'ECMWF/NRT_FORECAST/IFS/OPER';
+
+// Colección del último ciclo disponible
+function coleccionUltimoPronostico(aoi) {
+  var col = ee.ImageCollection(ECMWF_ID)
+    .filterBounds(aoi);
+
+  var ultimaCorrida = ee.Number(col.aggregate_max('creation_time'));
+
+  return col
+    .filter(ee.Filter.eq('creation_time', ultimaCorrida))
+    .sort('forecast_hours');
+}
+
+function filtrarPorDias(aoi, dias) {
+  var horas = ee.Number(dias).multiply(24);
+
+  return coleccionUltimoPronostico(aoi)
+    .filter(ee.Filter.lte('forecast_hours', horas));
+}
+
+// Temperatura media 2 m en °C
+exports.obtenerTemperatura = function(aoi, dias) {
+  return filtrarPorDias(aoi, dias)
+    .select('temperature_2m_sfc')
+    .mean()
+    .rename('temp_C')
+    .clip(aoi);
+};
+
+// Precipitación acumulada en mm.
+// ECMWF total_precipitation_sfc está en m y es acumulada desde hora 0.
+exports.obtenerPrecipitacion = function(aoi, dias) {
+  return filtrarPorDias(aoi, dias)
+    .select('total_precipitation_sfc')
+    .max()
+    .multiply(1000)
+    .rename('precip_mm')
+    .clip(aoi);
+};
+
+// Humedad relativa aproximada desde temperatura y punto de rocío
+exports.obtenerHumedad = function(aoi, dias) {
+  var img = filtrarPorDias(aoi, dias)
+    .select(['temperature_2m_sfc', 'dewpoint_temperature_2m_sfc'])
+    .mean();
+
+  var rh = img.expression(
+    '100 * (exp((17.625 * Td) / (243.04 + Td)) / exp((17.625 * T) / (243.04 + T)))',
+    {
+      T: img.select('temperature_2m_sfc'),
+      Td: img.select('dewpoint_temperature_2m_sfc')
+    }
+  )
+  .clamp(0, 100)
+  .rename('humedad_relativa');
+
+  return rh.clip(aoi);
+};
+
+// Radiación solar descendente acumulada, convertida de J/m2 a MJ/m2
+exports.obtenerRadiacion = function(aoi, dias) {
+  return filtrarPorDias(aoi, dias)
+    .select('surface_solar_radiation_downwards_sfc')
+    .max()
+    .divide(1e6)
+    .rename('radiacion_MJ_m2')
+    .clip(aoi);
+};
+
+// Viento 10 m en m/s
+exports.obtenerViento = function(aoi, dias) {
+  var col = filtrarPorDias(aoi, dias)
+    .select(['u_component_of_wind_10m_sfc', 'v_component_of_wind_10m_sfc'])
+    .map(function(img) {
+      var u = img.select('u_component_of_wind_10m_sfc');
+      var v = img.select('v_component_of_wind_10m_sfc');
+
+      return u.pow(2)
+        .add(v.pow(2))
+        .sqrt()
+        .rename('viento_ms')
+        .copyProperties(img, img.propertyNames());
+    });
+
+  return col.mean().clip(aoi);
+};
+
+// ET0 aproximada por Hargreaves usando temperatura y radiación.
+// Producto operativo simplificado; calibrar localmente si se requiere precisión agronómica.
+exports.obtenerEvapotranspiracion = function(aoi, dias) {
+  var col = filtrarPorDias(aoi, dias).select('temperature_2m_sfc');
+
+  var tmed = col.mean();
+  var tmax = col.max();
+  var tmin = col.min();
+
+  var rs = exports.obtenerRadiacion(aoi, dias); // MJ/m2 acumulado
+
+  var et0 = ee.Image().expression(
+    '0.0023 * (Tmed + 17.8) * sqrt(max(Tmax - Tmin, 0)) * Rs * 0.408',
+    {
+      Tmed: tmed,
+      Tmax: tmax,
+      Tmin: tmin,
+      Rs: rs
+    }
+  )
+  .max(0)
+  .rename('ET0_mm');
+
+  return et0.clip(aoi);
+};
+
+exports.pronostico7dias = function(aoi) {
+  return {
+    precipitacion: exports.obtenerPrecipitacion(aoi, 7),
+    temperatura: exports.obtenerTemperatura(aoi, 7),
+    humedad: exports.obtenerHumedad(aoi, 7),
+    radiacion: exports.obtenerRadiacion(aoi, 7),
+    viento: exports.obtenerViento(aoi, 7),
+    et0: exports.obtenerEvapotranspiracion(aoi, 7)
+  };
+};
+
+exports.pronostico15dias = function(aoi) {
+  return {
+    precipitacion: exports.obtenerPrecipitacion(aoi, 15),
+    temperatura: exports.obtenerTemperatura(aoi, 15),
+    humedad: exports.obtenerHumedad(aoi, 15),
+    radiacion: exports.obtenerRadiacion(aoi, 15),
+    viento: exports.obtenerViento(aoi, 15),
+    et0: exports.obtenerEvapotranspiracion(aoi, 15)
+  };
+};

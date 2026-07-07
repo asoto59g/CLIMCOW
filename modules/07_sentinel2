@@ -1,0 +1,175 @@
+var S2_ID = 'COPERNICUS/S2_SR_HARMONIZED';
+
+exports.MascaraNubes = function(img) {
+  var scl = img.select('SCL');
+
+  var mask = scl.neq(3)   // sombra
+    .and(scl.neq(8))      // nube media
+    .and(scl.neq(9))      // nube alta
+    .and(scl.neq(10))     // cirrus
+    .and(scl.neq(11));    // nieve
+
+  return img.updateMask(mask)
+    .divide(10000)
+    .copyProperties(img, img.propertyNames());
+};
+
+function coleccionS2(aoi, fechaInicio, fechaFinal) {
+  return ee.ImageCollection(S2_ID)
+    .filterBounds(aoi)
+    .filterDate(fechaInicio, fechaFinal)
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 60))
+    .map(exports.MascaraNubes);
+}
+
+function composicion(aoi, fechaInicio, fechaFinal) {
+  return coleccionS2(aoi, fechaInicio, fechaFinal)
+    .median()
+    .clip(aoi);
+}
+
+exports.Composicion = composicion;
+
+exports.NDVI = function(aoi, fechaInicio, fechaFinal) {
+  var img = composicion(aoi, fechaInicio, fechaFinal);
+
+  return img.normalizedDifference(['B8', 'B4'])
+    .rename('NDVI')
+    .clip(aoi);
+};
+
+exports.EVI = function(aoi, fechaInicio, fechaFinal) {
+  var img = composicion(aoi, fechaInicio, fechaFinal);
+
+  return img.expression(
+    '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))',
+    {
+      NIR: img.select('B8'),
+      RED: img.select('B4'),
+      BLUE: img.select('B2')
+    }
+  )
+  .rename('EVI')
+  .clip(aoi);
+};
+
+exports.NDMI = function(aoi, fechaInicio, fechaFinal) {
+  var img = composicion(aoi, fechaInicio, fechaFinal);
+
+  return img.normalizedDifference(['B8', 'B11'])
+    .rename('NDMI')
+    .clip(aoi);
+};
+
+exports.NDWI = function(aoi, fechaInicio, fechaFinal) {
+  var img = composicion(aoi, fechaInicio, fechaFinal);
+
+  return img.normalizedDifference(['B3', 'B8'])
+    .rename('NDWI')
+    .clip(aoi);
+};
+
+exports.MSAVI = function(aoi, fechaInicio, fechaFinal) {
+  var img = composicion(aoi, fechaInicio, fechaFinal);
+
+  return img.expression(
+    '(2 * NIR + 1 - sqrt(pow((2 * NIR + 1), 2) - 8 * (NIR - RED))) / 2',
+    {
+      NIR: img.select('B8'),
+      RED: img.select('B4')
+    }
+  )
+  .rename('MSAVI')
+  .clip(aoi);
+};
+
+exports.SAVI = function(aoi, fechaInicio, fechaFinal) {
+  var img = composicion(aoi, fechaInicio, fechaFinal);
+  var L = 0.5;
+
+  return img.expression(
+    '((NIR - RED) / (NIR + RED + L)) * (1 + L)',
+    {
+      NIR: img.select('B8'),
+      RED: img.select('B4'),
+      L: L
+    }
+  )
+  .rename('SAVI')
+  .clip(aoi);
+};
+
+exports.BSI = function(aoi, fechaInicio, fechaFinal) {
+  var img = composicion(aoi, fechaInicio, fechaFinal);
+
+  return img.expression(
+    '((SWIR + RED) - (NIR + BLUE)) / ((SWIR + RED) + (NIR + BLUE))',
+    {
+      SWIR: img.select('B11'),
+      RED: img.select('B4'),
+      NIR: img.select('B8'),
+      BLUE: img.select('B2')
+    }
+  )
+  .rename('BSI')
+  .clip(aoi);
+};
+
+exports.NBR = function(aoi, fechaInicio, fechaFinal) {
+  var img = composicion(aoi, fechaInicio, fechaFinal);
+
+  return img.normalizedDifference(['B8', 'B12'])
+    .rename('NBR')
+    .clip(aoi);
+};
+
+exports.NBR2 = function(aoi, fechaInicio, fechaFinal) {
+  var img = composicion(aoi, fechaInicio, fechaFinal);
+
+  return img.normalizedDifference(['B11', 'B12'])
+    .rename('NBR2')
+    .clip(aoi);
+};
+
+exports.LAI = function(aoi, fechaInicio, fechaFinal) {
+  var ndvi = exports.NDVI(aoi, fechaInicio, fechaFinal);
+
+  // Aproximación empírica simple
+  return ndvi.expression(
+    'max(0, min(6, 3.618 * NDVI - 0.118))',
+    {
+      NDVI: ndvi
+    }
+  )
+  .rename('LAI')
+  .clip(aoi);
+};
+
+exports.CoberturaVegetal = function(aoi, fechaInicio, fechaFinal) {
+  var ndvi = exports.NDVI(aoi, fechaInicio, fechaFinal);
+
+  return ndvi.expression(
+    'pow((NDVI - 0.2) / (0.86 - 0.2), 2)',
+    {
+      NDVI: ndvi
+    }
+  )
+  .clamp(0, 1)
+  .rename('cobertura_vegetal')
+  .clip(aoi);
+};
+
+exports.Clorofila = function(aoi, fechaInicio, fechaFinal) {
+  var img = composicion(aoi, fechaInicio, fechaFinal);
+
+  // Índice red-edge simple
+  return img.normalizedDifference(['B8A', 'B5'])
+    .rename('clorofila_rededge')
+    .clip(aoi);
+};
+
+exports.ComposicionRGB = function(aoi, fechaInicio, fechaFinal) {
+  return composicion(aoi, fechaInicio, fechaFinal)
+    .select(['B4', 'B3', 'B2'])
+    .clip(aoi);
+};

@@ -1,0 +1,82 @@
+exports.calcularBalance = function(inputs) {
+  var aoi = inputs.aoi;
+
+  var precipObs = inputs.precipitacionObservada;
+  var precip7 = inputs.pronostico7.precipitacion;
+  var precip15 = inputs.pronostico15.precipitacion;
+
+  var et0 = inputs.pronostico7.et0;
+  var aguaDisponible = inputs.aguaDisponible;
+  var pendiente = inputs.pendiente;
+  var humedadS1 = inputs.humedadS1;
+  var ndmi = inputs.ndmi;
+  var cobertura = inputs.coberturaVegetal;
+
+  // Coeficiente de escorrentía simplificado:
+  // aumenta con pendiente y suelo descubierto.
+  var coefEscorrentia = pendiente.unitScale(0, 35)
+    .clamp(0, 1)
+    .multiply(0.35)
+    .add(ee.Image(1).subtract(cobertura).multiply(0.25))
+    .clamp(0.05, 0.65)
+    .rename('coef_escorrentia');
+
+  var escorrentia = precipObs
+    .multiply(coefEscorrentia)
+    .rename('escorrentia_mm');
+
+  var infiltracion = precipObs
+    .subtract(escorrentia)
+    .max(0)
+    .rename('infiltracion_mm');
+
+  var percolacion = infiltracion
+    .subtract(aguaDisponible)
+    .max(0)
+    .rename('percolacion_mm');
+
+  var humedadSuelo = humedadS1
+    .multiply(0.5)
+    .add(ndmi.unitScale(-0.4, 0.6).clamp(0, 1).multiply(0.5))
+    .rename('humedad_suelo_relativa');
+
+  var balance = precipObs
+    .add(infiltracion)
+    .subtract(et0)
+    .subtract(escorrentia)
+    .rename('balance_hidrico_mm');
+
+  var deficit = et0
+    .subtract(precipObs)
+    .subtract(humedadSuelo.multiply(aguaDisponible))
+    .max(0)
+    .rename('deficit_mm');
+
+  var exceso = precipObs
+    .subtract(et0)
+    .subtract(aguaDisponible)
+    .max(0)
+    .rename('exceso_mm');
+
+  var recarga = infiltracion
+    .subtract(et0.multiply(0.4))
+    .max(0)
+    .rename('recarga_mm');
+
+  return {
+    MapaBalance: balance.clip(aoi),
+    MapaDeficit: deficit.clip(aoi),
+    MapaExceso: exceso.clip(aoi),
+    HumedadSuelo: humedadSuelo.clip(aoi),
+    Pronostico7: precip7.clip(aoi),
+    Pronostico15: precip15.clip(aoi),
+
+    Precipitacion: precipObs.clip(aoi),
+    Evapotranspiracion: et0.clip(aoi),
+    Escorrentia: escorrentia.clip(aoi),
+    Infiltracion: infiltracion.clip(aoi),
+    Percolacion: percolacion.clip(aoi),
+    AguaDisponible: aguaDisponible.clip(aoi),
+    Recarga: recarga.clip(aoi)
+  };
+};
