@@ -1,9 +1,9 @@
 // =======================================================
 // MAIN - ORQUESTADOR DEL PROYECTO CLIMCOW
 // =======================================================
-
 // Repositorio del usuario.
 // Si cambias de cuenta o proyecto, ajusta esta ruta.
+
 var config = require('users/oasotob/Proyecto_Ganadero:modules/01_config');
 var ecmwf = require('users/oasotob/Proyecto_Ganadero:modules/02_ecmwf');
 var lluvia = require('users/oasotob/Proyecto_Ganadero:modules/03_precipitacion');
@@ -15,14 +15,12 @@ var balanceModule = require('users/oasotob/Proyecto_Ganadero:modules/08_balance'
 var ganaderia = require('users/oasotob/Proyecto_Ganadero:modules/09_ganaderia');
 var interfaz = require('users/oasotob/Proyecto_Ganadero:modules/10_ui');
 
-
 // =======================================================
 // FUNCIÓN PRINCIPAL RECALCULABLE
 // Esta función se ejecuta:
 // 1. Al cargar el script por primera vez.
 // 2. Cuando el usuario presiona "Actualizar análisis" en la UI.
 // =======================================================
-
 function ejecutarAplicacion(opciones) {
   opciones = opciones || {};
 
@@ -40,7 +38,6 @@ function ejecutarAplicacion(opciones) {
   // area(1): error máximo de 1 metro.
   // m² → ha: dividir entre 10.000
   // ha → km²: dividir entre 100
-
   var areaAOIHa = aoi.area(1).divide(10000);
   var areaAOIKm2 = areaAOIHa.divide(100);
 
@@ -53,14 +50,11 @@ function ejecutarAplicacion(opciones) {
   print('Área AOI km²:', areaAOIKm2);
   print('======================================');
 
-
   // =====================================================
   // 1. ECMWF - PRONÓSTICO
   // =====================================================
-
   var pronostico7 = ecmwf.pronostico7dias(aoi);
   var pronostico15 = ecmwf.pronostico15dias(aoi);
-
 
   // =====================================================
   // 2. LLUVIA OBSERVADA
@@ -69,7 +63,6 @@ function ejecutarAplicacion(opciones) {
   // - Si no hay CHIRPS, usa IMERG.
   // - Si no hay ninguna fuente, devuelve lluvia 0 mm.
   // =====================================================
-
   var precipitacionObservada = lluvia.lluviaAcumulada(
     aoi,
     fechaInicio,
@@ -83,6 +76,26 @@ function ejecutarAplicacion(opciones) {
     fechaFinal
   );
 
+  // =====================================================
+  // 2B. ANOMALÍA Y SPI DE LLUVIA
+  // Capas descritas en README y requeridas por modules/10_ui.
+  // =====================================================
+  var anomaliaLluvia = lluvia.anomalia(
+    aoi,
+    fechaInicio,
+    fechaFinal,
+    1981,
+    2024
+  );
+
+  var spi = lluvia.SPI(
+    aoi,
+    fechaInicio,
+    fechaFinal,
+    1981,
+    2024
+  );
+
   print('Diagnóstico lluvia - CHIRPS imágenes en periodo:', diagLluvia.nCHIRPS);
   print('Diagnóstico lluvia - IMERG imágenes en periodo:', diagLluvia.nIMERG);
   print('Última fecha disponible CHIRPS:', diagLluvia.ultimaFechaCHIRPS);
@@ -91,42 +104,36 @@ function ejecutarAplicacion(opciones) {
   print('Fuente lluvia solicitada:', precipitacionObservada.get('fuente_lluvia_solicitada'));
   print('Fuente lluvia real:', precipitacionObservada.get('fuente_lluvia_real'));
   print('Número de imágenes lluvia usadas:', precipitacionObservada.get('n_imagenes_lluvia'));
-
+  print('Anomalía de lluvia:', anomaliaLluvia);
+  print('SPI:', spi);
 
   // =====================================================
   // 3. SUELOS
   // =====================================================
-
   var perfilSuelo = suelos.extraerPerfil(aoi);
   var aguaDisponible = suelos.calcularAguaDisponible(aoi);
   var claseSuelo = suelos.clasificarSuelo(aoi);
 
-
   // =====================================================
   // 4. DEM
   // =====================================================
-
   var elevacion = dem.DEM(aoi);
   var pendiente = dem.Pendiente(aoi);
   var aspecto = dem.Aspecto(aoi);
   var twi = dem.TWI(aoi);
   var lsFactor = dem.LSFactor(aoi);
 
-
   // =====================================================
   // 5. SENTINEL-1
   // =====================================================
-
   var vv = s1.VV(aoi, fechaInicio, fechaFinal);
   var vh = s1.VH(aoi, fechaInicio, fechaFinal);
   var ratioS1 = s1.Ratio(aoi, fechaInicio, fechaFinal);
   var humedadS1 = s1.Humedad(aoi, fechaInicio, fechaFinal);
 
-
   // =====================================================
   // 6. SENTINEL-2
   // =====================================================
-
   var rgb = s2.ComposicionRGB(aoi, fechaInicio, fechaFinal);
   var ndvi = s2.NDVI(aoi, fechaInicio, fechaFinal);
   var evi = s2.EVI(aoi, fechaInicio, fechaFinal);
@@ -139,11 +146,9 @@ function ejecutarAplicacion(opciones) {
   var coberturaVegetal = s2.CoberturaVegetal(aoi, fechaInicio, fechaFinal);
   var clorofila = s2.Clorofila(aoi, fechaInicio, fechaFinal);
 
-
   // =====================================================
   // 7. BALANCE HÍDRICO
   // =====================================================
-
   var balance = balanceModule.calcularBalance({
     aoi: aoi,
 
@@ -187,11 +192,9 @@ function ejecutarAplicacion(opciones) {
     .set('area_aoi_ha', areaAOIHa)
     .set('area_aoi_km2', areaAOIKm2);
 
-
   // =====================================================
   // 8. INDICADORES GANADEROS
   // =====================================================
-
   var indicadores = ganaderia.generarIndicadores({
     aoi: aoi,
     ndvi: ndvi,
@@ -220,11 +223,9 @@ function ejecutarAplicacion(opciones) {
     .set('area_aoi_ha', areaAOIHa)
     .set('area_aoi_km2', areaAOIKm2);
 
-
   // =====================================================
   // 9. INTERFAZ
   // =====================================================
-
   interfaz.construirInterfaz({
     aoi: aoi,
     fechaInicio: fechaInicio,
@@ -273,6 +274,8 @@ function ejecutarAplicacion(opciones) {
 
     // Lluvia
     precipitacionObservada: precipitacionObservada,
+    anomaliaLluvia: anomaliaLluvia,
+    spi: spi,
     diagnosticoLluvia: diagLluvia,
 
     // Resultados
@@ -285,23 +288,21 @@ function ejecutarAplicacion(opciones) {
     }
   });
 
-
   // =====================================================
   // 10. PRINTS DE CONTROL
   // =====================================================
-
   print('Pronóstico 7 días', pronostico7);
   print('Pronóstico 15 días', pronostico15);
+  print('Anomalía de lluvia', anomaliaLluvia);
+  print('SPI', spi);
   print('Perfil suelo', perfilSuelo);
   print('Balance hídrico', balance);
   print('Indicadores ganaderos', indicadores);
 }
 
-
 // =======================================================
 // EJECUCIÓN INICIAL
 // =======================================================
-
 ejecutarAplicacion({
   aoi: config.AOI,
   fechaInicio: config.fechaInicio,
