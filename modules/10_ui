@@ -1,6 +1,6 @@
 // =======================================================
 // MÓDULO 10 - INTERFAZ
-// Proyecto Ganadero
+// Proyecto CLIMCOW / Proyecto Ganadero
 // =======================================================
 
 // Variables internas para evitar duplicar el panel izquierdo
@@ -8,11 +8,13 @@
 var panelIzquierdoGlobal = null;
 var panelIzquierdoInsertado = false;
 
+// Listener global para evitar acumular múltiples eventos Map.onClick().
+var clickListenerIdGlobal = null;
+var clickVersionGlobal = 0;
 
 // =======================================================
 // FUNCIÓN PRINCIPAL EXPORTADA
 // =======================================================
-
 function construirInterfaz(app) {
   var aoi = app.aoi;
   var paletas = app.paletas;
@@ -20,17 +22,14 @@ function construirInterfaz(app) {
   // Limpiar capas del mapa.
   Map.clear();
 
-  // Limpiar widgets superpuestos del mapa para evitar duplicados
-  // cuando se actualiza el análisis.
+  // Limpiar widgets superpuestos del mapa para evitar duplicados.
   Map.widgets().reset([]);
 
   Map.centerObject(aoi, 11);
 
   // =====================================================
   // CAPA VISUAL DEL AOI USADO EN EL ANÁLISIS
-  // Aparece en el control de capas, apagada por defecto.
   // =====================================================
-
   var aoiVisual = ee.FeatureCollection([
     ee.Feature(aoi)
   ]).style({
@@ -39,17 +38,387 @@ function construirInterfaz(app) {
     width: 3
   });
 
+  // Capas seguras para evitar errores si algún parámetro no llega desde main.
+  var lluviaObservadaImg = imagenSegura(
+    app.precipitacionObservada,
+    'lluvia_observada_mm',
+    aoi
+  );
+
+  var anomaliaLluviaImg = imagenSegura(
+    app.anomaliaLluvia,
+    'anomalia_lluvia_mm',
+    aoi
+  );
+
+  var spiImg = imagenSegura(
+    app.spi,
+    'SPI',
+    aoi
+  );
+
   // ===============================
   // DEFINICIÓN DE CAPAS
+  // Todas las capas descritas en Readme.md
   // ===============================
-
   var capas = {
+    // -------------------------------
+    // AOI
+    // -------------------------------
     AOI_Finca: {
       img: aoiVisual,
       vis: {},
       visible: false
     },
 
+    // -------------------------------
+    // 1. Pronóstico Meteorológico ECMWF
+    // -------------------------------
+    Temp_7d_C: {
+      img: app.pronostico7.temperatura,
+      vis: {
+        min: 5,
+        max: 38,
+        palette: ['08306b', '41b6c4', 'ffffcc', 'fd8d3c', 'bd0026']
+      },
+      visible: false
+    },
+
+    Temp_15d_C: {
+      img: app.pronostico15.temperatura,
+      vis: {
+        min: 5,
+        max: 38,
+        palette: ['08306b', '41b6c4', 'ffffcc', 'fd8d3c', 'bd0026']
+      },
+      visible: false
+    },
+
+    Precip_Pronostico_7d_mm: {
+      img: app.pronostico7.precipitacion,
+      vis: {
+        min: 0,
+        max: 80,
+        palette: ['ffffff', 'c7e9b4', '7fcdbb', '41b6c4', '225ea8']
+      },
+      visible: false
+    },
+
+    Precip_Pronostico_15d_mm: {
+      img: app.pronostico15.precipitacion,
+      vis: {
+        min: 0,
+        max: 150,
+        palette: ['ffffff', 'c7e9b4', '7fcdbb', '41b6c4', '225ea8']
+      },
+      visible: false
+    },
+
+    Humedad_Relativa_7d_pct: {
+      img: app.pronostico7.humedad,
+      vis: {
+        min: 20,
+        max: 100,
+        palette: ['d73027', 'fee08b', 'd9ef8b', '1a9850', '2166ac']
+      },
+      visible: false
+    },
+
+    Humedad_Relativa_15d_pct: {
+      img: app.pronostico15.humedad,
+      vis: {
+        min: 20,
+        max: 100,
+        palette: ['d73027', 'fee08b', 'd9ef8b', '1a9850', '2166ac']
+      },
+      visible: false
+    },
+
+    Viento_7d_ms: {
+      img: app.pronostico7.viento,
+      vis: {
+        min: 0,
+        max: 10,
+        palette: ['ffffff', 'ffffb2', 'fecc5c', 'fd8d3c', 'e31a1c']
+      },
+      visible: false
+    },
+
+    Viento_15d_ms: {
+      img: app.pronostico15.viento,
+      vis: {
+        min: 0,
+        max: 10,
+        palette: ['ffffff', 'ffffb2', 'fecc5c', 'fd8d3c', 'e31a1c']
+      },
+      visible: false
+    },
+
+    ET0_7d_mm: {
+      img: app.pronostico7.et0,
+      vis: {
+        min: 0,
+        max: 70,
+        palette: ['f7fbff', 'c6dbef', '6baed6', '2171b5', '08306b']
+      },
+      visible: false
+    },
+
+    ET0_15d_mm: {
+      img: app.pronostico15.et0,
+      vis: {
+        min: 0,
+        max: 120,
+        palette: ['f7fbff', 'c6dbef', '6baed6', '2171b5', '08306b']
+      },
+      visible: false
+    },
+
+    // -------------------------------
+    // 2. Precipitación Observada CHIRPS / IMERG
+    // -------------------------------
+    Lluvia_Observada_mm: {
+      img: lluviaObservadaImg,
+      vis: {
+        min: 0,
+        max: 200,
+        palette: ['ffffff', 'c7e9b4', '7fcdbb', '41b6c4', '225ea8', '081d58']
+      },
+      visible: false
+    },
+
+    Anomalia_Lluvia_mm: {
+      img: anomaliaLluviaImg,
+      vis: {
+        min: -150,
+        max: 150,
+        palette: ['8c510a', 'd8b365', 'f6e8c3', 'ffffff', 'c7eae5', '5ab4ac', '01665e']
+      },
+      visible: false
+    },
+
+    SPI: {
+      img: spiImg,
+      vis: {
+        min: -2.5,
+        max: 2.5,
+        palette: ['7f0000', 'd7301f', 'fc8d59', 'ffffbf', '91bfdb', '4575b4', '313695']
+      },
+      visible: false
+    },
+
+    // -------------------------------
+    // 3. Variables de Suelo
+    // -------------------------------
+    Arcilla_pct: {
+      img: app.perfilSuelo.select('arcilla_pct'),
+      vis: {
+        min: 0,
+        max: 60,
+        palette: ['ffffcc', 'c2e699', '78c679', '31a354', '006837']
+      },
+      visible: false
+    },
+
+    Arena_pct: {
+      img: app.perfilSuelo.select('arena_pct'),
+      vis: {
+        min: 0,
+        max: 90,
+        palette: ['fff7bc', 'fec44f', 'fe9929', 'ec7014', '993404']
+      },
+      visible: false
+    },
+
+    Limo_pct: {
+      img: app.perfilSuelo.select('limo_pct'),
+      vis: {
+        min: 0,
+        max: 70,
+        palette: ['f7fcf0', 'ccebc5', '7bccc4', '2b8cbe', '084081']
+      },
+      visible: false
+    },
+
+    Materia_Organica_pct: {
+      img: app.perfilSuelo.select('materia_organica'),
+      vis: {
+        min: 0,
+        max: 8,
+        palette: ['ffffe5', 'f7fcb9', 'addd8e', '31a354', '006837']
+      },
+      visible: false
+    },
+
+    Carbono_Organico: {
+      img: app.perfilSuelo.select('carbono_organico'),
+      vis: {
+        min: 0,
+        max: 5,
+        palette: ['ffffe5', 'f7fcb9', 'addd8e', '41ab5d', '005a32']
+      },
+      visible: false
+    },
+
+    pH_Suelo: {
+      img: app.perfilSuelo.select('ph_h2o'),
+      vis: {
+        min: 4,
+        max: 9,
+        palette: ['d73027', 'fc8d59', 'ffffbf', '91cf60', '1a9850', '4575b4']
+      },
+      visible: false
+    },
+
+    Densidad_Aparente_g_cm3: {
+      img: app.perfilSuelo.select('densidad_aparente_g_cm3'),
+      vis: {
+        min: 0.8,
+        max: 1.8,
+        palette: ['ffffcc', 'c2e699', '78c679', 'fecc5c', 'e31a1c']
+      },
+      visible: false
+    },
+
+    Capacidad_Campo_pct: {
+      img: app.perfilSuelo.select('capacidad_campo_pct'),
+      vis: {
+        min: 0,
+        max: 60,
+        palette: ['ffffcc', 'a1dab4', '41b6c4', '2c7fb8', '253494']
+      },
+      visible: false
+    },
+
+    Punto_Marchitez_pct: {
+      img: app.perfilSuelo.select('punto_marchitez_pct'),
+      vis: {
+        min: 0,
+        max: 40,
+        palette: ['fff7bc', 'fec44f', 'fe9929', 'ec7014', '993404']
+      },
+      visible: false
+    },
+
+    Agua_Disponible_mm: {
+      img: app.aguaDisponible,
+      vis: {
+        min: 0,
+        max: 180,
+        palette: ['ffffcc', 'a1dab4', '41b6c4', '2c7fb8', '253494']
+      },
+      visible: false
+    },
+
+    Clase_Suelo: {
+      img: app.claseSuelo,
+      vis: {
+        min: 1,
+        max: 3,
+        palette: ['fdae61', 'ffffbf', '8c510a']
+      },
+      visible: false
+    },
+
+    // -------------------------------
+    // 4. Topografía y Relieve
+    // -------------------------------
+    Elevacion_m: {
+      img: app.elevacion,
+      vis: {
+        min: 0,
+        max: 2000,
+        palette: ['006837', '31a354', 'addd8e', 'ffffbf', 'fdae61', 'a50026']
+      },
+      visible: false
+    },
+
+    Pendiente_grados: {
+      img: app.pendiente,
+      vis: {
+        min: 0,
+        max: 35,
+        palette: paletas.pendiente
+      },
+      visible: false
+    },
+
+    Aspecto_grados: {
+      img: app.aspecto,
+      vis: {
+        min: 0,
+        max: 360,
+        palette: ['blue', 'cyan', 'green', 'yellow', 'orange', 'red', 'purple']
+      },
+      visible: false
+    },
+
+    TWI: {
+      img: app.twi,
+      vis: {
+        min: 0,
+        max: 10,
+        palette: ['ffffcc', 'a1dab4', '41b6c4', '2c7fb8', '253494']
+      },
+      visible: false
+    },
+
+    LS_Factor: {
+      img: app.lsFactor,
+      vis: {
+        min: 0,
+        max: 20,
+        palette: ['ffffff', 'ffffb2', 'fecc5c', 'fd8d3c', 'e31a1c']
+      },
+      visible: false
+    },
+
+    // -------------------------------
+    // 5. Sentinel-1
+    // -------------------------------
+    S1_VV: {
+      img: app.vv,
+      vis: {
+        min: -25,
+        max: 0,
+        palette: ['000000', '555555', 'aaaaaa', 'ffffff']
+      },
+      visible: false
+    },
+
+    S1_VH: {
+      img: app.vh,
+      vis: {
+        min: -30,
+        max: -5,
+        palette: ['000000', '555555', 'aaaaaa', 'ffffff']
+      },
+      visible: false
+    },
+
+    S1_Ratio_VV_VH: {
+      img: app.ratioS1,
+      vis: {
+        min: 0,
+        max: 15,
+        palette: ['ffffcc', 'a1dab4', '41b6c4', '225ea8']
+      },
+      visible: false
+    },
+
+    Humedad_S1: {
+      img: app.humedadS1,
+      vis: {
+        min: 0,
+        max: 1,
+        palette: paletas.humedad
+      },
+      visible: false
+    },
+
+    // -------------------------------
+    // 5. Sentinel-2
+    // -------------------------------
     NDVI: {
       img: app.ndvi,
       vis: {
@@ -57,10 +426,103 @@ function construirInterfaz(app) {
         max: 0.9,
         palette: paletas.ndvi
       },
+      visible: true
+    },
+
+    EVI: {
+      img: app.evi,
+      vis: {
+        min: 0,
+        max: 1,
+        palette: ['brown', 'yellow', 'green']
+      },
       visible: false
     },
 
-    Balance: {
+    NDMI: {
+      img: app.ndmi,
+      vis: {
+        min: -0.5,
+        max: 0.7,
+        palette: ['brown', 'yellow', 'lightblue', 'blue']
+      },
+      visible: false
+    },
+
+    NDWI: {
+      img: app.ndwi,
+      vis: {
+        min: -0.5,
+        max: 0.7,
+        palette: ['brown', 'white', 'cyan', 'blue']
+      },
+      visible: false
+    },
+
+    MSAVI: {
+      img: app.msavi,
+      vis: {
+        min: 0,
+        max: 1,
+        palette: ['brown', 'yellow', 'green']
+      },
+      visible: false
+    },
+
+    SAVI: {
+      img: app.savi,
+      vis: {
+        min: 0,
+        max: 1,
+        palette: ['brown', 'yellow', 'green']
+      },
+      visible: false
+    },
+
+    BSI: {
+      img: app.bsi,
+      vis: {
+        min: -0.5,
+        max: 0.5,
+        palette: ['green', 'white', 'orange', 'brown']
+      },
+      visible: false
+    },
+
+    LAI: {
+      img: app.lai,
+      vis: {
+        min: 0,
+        max: 6,
+        palette: ['ffffcc', 'c2e699', '78c679', '31a354', '006837']
+      },
+      visible: false
+    },
+
+    Cobertura_Vegetal: {
+      img: app.coberturaVegetal,
+      vis: {
+        min: 0,
+        max: 1,
+        palette: ['brown', 'yellow', 'lightgreen', 'green']
+      },
+      visible: false
+    },
+
+    Clorofila_RedEdge: {
+      img: app.clorofila,
+      vis: {
+        min: -0.2,
+        max: 0.6,
+        palette: ['purple', 'white', 'lightgreen', 'darkgreen']
+      },
+      visible: false
+    },
+
+    // -------------------------------
+    // 6. Balance Hídrico y Riesgos
+    // -------------------------------
+    Balance_Hidrico_mm: {
       img: app.balance.MapaBalance,
       vis: {
         min: -100,
@@ -70,7 +532,7 @@ function construirInterfaz(app) {
       visible: true
     },
 
-    Deficit: {
+    Deficit_Hidrico_mm: {
       img: app.balance.MapaDeficit,
       vis: {
         min: 0,
@@ -80,7 +542,7 @@ function construirInterfaz(app) {
       visible: false
     },
 
-    Exceso: {
+    Exceso_Hidrico_mm: {
       img: app.balance.MapaExceso,
       vis: {
         min: 0,
@@ -90,7 +552,7 @@ function construirInterfaz(app) {
       visible: false
     },
 
-    HumedadSuelo: {
+    Humedad_Relativa_Suelo: {
       img: app.balance.HumedadSuelo,
       vis: {
         min: 0,
@@ -100,17 +562,60 @@ function construirInterfaz(app) {
       visible: false
     },
 
-    SemaforoGanadero: {
-      img: app.indicadores.SemaforoGanadero,
+    Escorrentia_mm: {
+      img: app.balance.Escorrentia,
+      vis: {
+        min: 0,
+        max: 100,
+        palette: ['ffffff', 'ffffb2', 'fecc5c', 'fd8d3c', 'e31a1c']
+      },
+      visible: false
+    },
+
+    Infiltracion_mm: {
+      img: app.balance.Infiltracion,
+      vis: {
+        min: 0,
+        max: 150,
+        palette: ['ffffff', 'c7e9b4', '7fcdbb', '41b6c4', '225ea8']
+      },
+      visible: false
+    },
+
+    Percolacion_mm: {
+      img: app.balance.Percolacion,
+      vis: {
+        min: 0,
+        max: 100,
+        palette: ['ffffff', 'deebf7', '9ecae1', '3182bd', '08519c']
+      },
+      visible: false
+    },
+
+    Recarga_mm: {
+      img: app.balance.Recarga,
+      vis: {
+        min: 0,
+        max: 100,
+        palette: ['ffffff', 'c7e9b4', '7fcdbb', '2c7fb8', '253494']
+      },
+      visible: false
+    },
+
+    // -------------------------------
+    // 7. Indicadores Ganaderos y Semáforo
+    // -------------------------------
+    Condicion_Pasto: {
+      img: app.indicadores.CondicionPasto,
       vis: {
         min: 1,
         max: 3,
-        palette: paletas.semaforo
+        palette: ['red', 'yellow', 'green']
       },
-      visible: true
+      visible: false
     },
 
-    Biomasa: {
+    Biomasa_kg_MS_ha: {
       img: app.indicadores.Biomasa,
       vis: {
         min: 0,
@@ -120,7 +625,17 @@ function construirInterfaz(app) {
       visible: false
     },
 
-    RiesgoSequia: {
+    Estres_Hidrico: {
+      img: app.indicadores.EstresHidrico,
+      vis: {
+        min: 0,
+        max: 1,
+        palette: ['green', 'yellow', 'orange', 'red']
+      },
+      visible: false
+    },
+
+    Riesgo_Sequia: {
       img: app.indicadores.RiesgoSequia,
       vis: {
         min: 0,
@@ -130,7 +645,7 @@ function construirInterfaz(app) {
       visible: false
     },
 
-    RiesgoBarro: {
+    Riesgo_Barro: {
       img: app.indicadores.RiesgoBarro,
       vis: {
         min: 0,
@@ -138,13 +653,95 @@ function construirInterfaz(app) {
         palette: ['white', 'cyan', 'blue', 'purple']
       },
       visible: false
+    },
+
+    Disponibilidad_Agua_mm: {
+      img: app.indicadores.DisponibilidadAgua,
+      vis: {
+        min: 0,
+        max: 180,
+        palette: ['ffffcc', 'a1dab4', '41b6c4', '2c7fb8', '253494']
+      },
+      visible: false
+    },
+
+    Carga_Animal_UGG_ha: {
+      img: app.indicadores.CargaAnimalSugerida,
+      vis: {
+        min: 0,
+        max: 3,
+        palette: ['white', 'yellow', 'orange', 'green']
+      },
+      visible: false
+    },
+
+    THI_Indice_Calor: {
+      img: app.indicadores.IndiceCalor,
+      vis: {
+        min: 65,
+        max: 85,
+        palette: ['green', 'yellow', 'orange', 'red']
+      },
+      visible: false
+    },
+
+    Confort_Animal: {
+      img: app.indicadores.IndiceConfortAnimal,
+      vis: {
+        min: 1,
+        max: 3,
+        palette: ['green', 'yellow', 'red']
+      },
+      visible: false
+    },
+
+    Disponibilidad_Forraje_kg_MS_ha: {
+      img: app.indicadores.DisponibilidadForraje,
+      vis: {
+        min: 0,
+        max: 5000,
+        palette: ['white', 'lightgreen', 'green', 'darkgreen']
+      },
+      visible: false
+    },
+
+    Produccion_Potencial_Relativa: {
+      img: app.indicadores.ProduccionPotencial,
+      vis: {
+        min: 0,
+        max: 5,
+        palette: ['white', 'lightgreen', 'green', 'darkgreen']
+      },
+      visible: false
+    },
+
+    Clasificacion_Potreros: {
+      img: app.indicadores.ClasificacionPotreros,
+      vis: {
+        min: 1,
+        max: 3,
+        palette: ['red', 'yellow', 'green']
+      },
+      visible: false
+    },
+
+    Semaforo_Ganadero: {
+      img: app.indicadores.SemaforoGanadero,
+      vis: {
+        min: 1,
+        max: 3,
+        palette: paletas.semaforo
+      },
+      visible: true
     }
   };
+
+  // Imagen multibanda para inspector y exportación CSV.
+  var imagenResumen = construirImagenResumen(app);
 
   // ===============================
   // AGREGAR CAPAS AL MAPA
   // ===============================
-
   Map.addLayer(
     app.rgb,
     {
@@ -168,7 +765,6 @@ function construirInterfaz(app) {
   // ===============================
   // PANEL IZQUIERDO
   // ===============================
-
   var panelIzquierdo = panelIzquierdoGlobal;
 
   if (!panelIzquierdo) {
@@ -193,7 +789,6 @@ function construirInterfaz(app) {
     }
   }));
 
-  // Cajetines para fechas, AOI y área.
   agregarControlesEstudio(panelIzquierdo, app);
 
   panelIzquierdo.add(ui.Label({
@@ -254,18 +849,7 @@ function construirInterfaz(app) {
       stretch: 'horizontal'
     },
     onClick: function() {
-      var imagenStats = ee.Image.cat([
-        app.ndvi,
-        app.balance.MapaBalance,
-        app.balance.MapaDeficit,
-        app.balance.MapaExceso,
-        app.balance.HumedadSuelo,
-        app.indicadores.SemaforoGanadero,
-        app.indicadores.Biomasa,
-        app.indicadores.CargaAnimalSugerida
-      ]);
-
-      var stats = imagenStats.reduceRegion({
+      var stats = imagenResumen.reduceRegion({
         reducer: ee.Reducer.mean(),
         geometry: aoi,
         scale: app.escala,
@@ -302,7 +886,6 @@ function construirInterfaz(app) {
   // ===============================
   // PANEL DERECHO
   // ===============================
-
   var panelDerecho = ui.Panel({
     style: {
       width: '320px',
@@ -364,7 +947,6 @@ function construirInterfaz(app) {
   // ===============================
   // INSPECTOR
   // ===============================
-
   panelDerecho.add(ui.Label({
     value: 'Inspector',
     style: {
@@ -374,24 +956,42 @@ function construirInterfaz(app) {
     }
   }));
 
-  var inspector = ui.Label('Click en el mapa para inspeccionar valores.');
+  var inspector = ui.Label({
+    value: 'Click en el mapa para inspeccionar valores.',
+    style: {
+      whiteSpace: 'pre',
+      fontSize: '12px'
+    }
+  });
+
   panelDerecho.add(inspector);
 
-  Map.onClick(function(coords) {
-    var punto = ee.Geometry.Point([coords.lon, coords.lat]);
+  // Evitar acumulación de eventos onClick cuando se actualiza.
+  clickVersionGlobal++;
+  var clickVersionLocal = clickVersionGlobal;
 
-    var imagenInspector = ee.Image.cat([
-      app.ndvi,
-      app.balance.MapaBalance,
-      app.balance.MapaDeficit,
-      app.balance.MapaExceso,
-      app.balance.HumedadSuelo,
-      app.indicadores.SemaforoGanadero,
-      app.indicadores.Biomasa,
-      app.indicadores.CargaAnimalSugerida
+  if (clickListenerIdGlobal !== null) {
+    try {
+      Map.unlisten(clickListenerIdGlobal);
+    } catch (err) {
+      print('Advertencia: no se pudo remover listener anterior del mapa:', err);
+    }
+
+    clickListenerIdGlobal = null;
+  }
+
+  clickListenerIdGlobal = Map.onClick(function(coords) {
+    // Si existe un listener antiguo, se ignora.
+    if (clickVersionLocal !== clickVersionGlobal) {
+      return;
+    }
+
+    var punto = ee.Geometry.Point([
+      coords.lon,
+      coords.lat
     ]);
 
-    var valores = imagenInspector.reduceRegion({
+    var valores = imagenResumen.reduceRegion({
       reducer: ee.Reducer.first(),
       geometry: punto,
       scale: app.escala,
@@ -405,25 +1005,22 @@ function construirInterfaz(app) {
         return;
       }
 
-      inspector.setValue(
-        'Lon: ' + coords.lon.toFixed(5) +
-        '\nLat: ' + coords.lat.toFixed(5) +
-        '\nNDVI: ' + formatoValor(v.NDVI) +
-        '\nBalance mm: ' + formatoValor(v.balance_hidrico_mm) +
-        '\nDéficit mm: ' + formatoValor(v.deficit_mm) +
-        '\nExceso mm: ' + formatoValor(v.exceso_mm) +
-        '\nHumedad suelo: ' + formatoValor(v.humedad_suelo_relativa) +
-        '\nSemáforo: ' + formatoValor(v.semaforo_ganadero) +
-        '\nBiomasa kg MS/ha: ' + formatoValor(v.biomasa_kg_ms_ha) +
-        '\nCarga UGG/ha: ' + formatoValor(v.carga_animal_sugerida_UGG_ha)
-      );
+      var lineas = [
+        'Lon: ' + coords.lon.toFixed(5),
+        'Lat: ' + coords.lat.toFixed(5)
+      ];
+
+      Object.keys(v).sort().forEach(function(k) {
+        lineas.push(k + ': ' + formatoValor(v[k]));
+      });
+
+      inspector.setValue(lineas.join('\n'));
     });
   });
 
   // ===============================
   // LEYENDA
   // ===============================
-
   var leyenda = ui.Panel({
     style: {
       position: 'bottom-left',
@@ -447,16 +1044,12 @@ function construirInterfaz(app) {
 
   // =======================================================
   // CONFIGURAR PANELES OCULTABLES
-  // Ambos paneles quedan ocultos por defecto.
-  // Se muestran con botones flotantes sobre el mapa.
   // =======================================================
-
   configurarPanelesOcultables(panelIzquierdo, panelDerecho);
 
   // ===============================
   // AGREGAR PANELES
   // ===============================
-
   if (!panelIzquierdoInsertado) {
     ui.root.insert(0, panelIzquierdo);
     panelIzquierdoInsertado = true;
@@ -465,18 +1058,14 @@ function construirInterfaz(app) {
   Map.add(panelDerecho);
 }
 
-
 // =======================================================
 // EXPORTACIÓN DEL MÓDULO
 // =======================================================
-
 exports.construirInterfaz = construirInterfaz;
-
 
 // =======================================================
 // CONTROLES DE FECHA, AOI Y ÁREA
 // =======================================================
-
 function agregarControlesEstudio(panel, app) {
   panel.add(ui.Label({
     value: 'Configuración del estudio',
@@ -486,10 +1075,6 @@ function agregarControlesEstudio(panel, app) {
       margin: '10px 0 6px 0'
     }
   }));
-
-  // =====================================================
-  // MOSTRAR ÁREA DEL AOI ACTUAL
-  // =====================================================
 
   var areaLabel = ui.Label({
     value: 'Área AOI: calculando...',
@@ -523,10 +1108,6 @@ function agregarControlesEstudio(panel, app) {
     );
   });
 
-  // =====================================================
-  // FECHAS
-  // =====================================================
-
   var fechaInicioBox = ui.Textbox({
     placeholder: 'YYYY-MM-DD',
     value: app.fechaInicio,
@@ -548,10 +1129,6 @@ function agregarControlesEstudio(panel, app) {
 
   panel.add(ui.Label('Fecha final'));
   panel.add(fechaFinalBox);
-
-  // =====================================================
-  // AOI
-  // =====================================================
 
   panel.add(ui.Label({
     value: 'AOI / Polígono de finca',
@@ -620,7 +1197,10 @@ function agregarControlesEstudio(panel, app) {
     onClick: function() {
       limpiarDibujos();
 
-      estado.setValue('Dibujo eliminado. Puedes dibujar otro polígono.');
+      estado.setValue(
+        'Dibujo eliminado.\nPuedes dibujar otro polígono.'
+      );
+
       estado.style().set('color', 'gray');
     }
   });
@@ -652,6 +1232,7 @@ function agregarControlesEstudio(panel, app) {
 
       var nuevoAOI = null;
       var origenAOI = '';
+
       var textoAOI = aoiBox.getValue();
 
       // ---------------------------------------------------
@@ -716,9 +1297,6 @@ function agregarControlesEstudio(panel, app) {
       print('Área AOI km²:', areaNuevaKm2);
       print('--------------------------------------');
 
-      // Limpiar el dibujo editable.
-      // El AOI quedará agregado como capa AOI_Finca,
-      // apagada por defecto, en el control de capas.
       limpiarDibujos();
 
       app.onActualizar({
@@ -745,16 +1323,10 @@ function agregarControlesEstudio(panel, app) {
   }));
 }
 
-
 // =======================================================
 // PANELES OCULTABLES PARA MÓVIL / TABLET / PC
 // =======================================================
-
 function configurarPanelesOcultables(panelIzquierdo, panelDerecho) {
-  // -----------------------------------------------------
-  // Botón flotante para abrir panel izquierdo
-  // -----------------------------------------------------
-
   var botonAbrirIzquierdo = ui.Button({
     label: '>>> Panel',
     style: {
@@ -765,10 +1337,6 @@ function configurarPanelesOcultables(panelIzquierdo, panelDerecho) {
       fontWeight: 'bold'
     }
   });
-
-  // -----------------------------------------------------
-  // Botón flotante para abrir panel derecho
-  // -----------------------------------------------------
 
   var botonAbrirDerecho = ui.Button({
     label: '<<< Gráficos',
@@ -781,10 +1349,6 @@ function configurarPanelesOcultables(panelIzquierdo, panelDerecho) {
     }
   });
 
-  // -----------------------------------------------------
-  // Botón interno para cerrar panel izquierdo
-  // -----------------------------------------------------
-
   var botonCerrarIzquierdo = ui.Button({
     label: '<<< Ocultar panel',
     style: {
@@ -796,10 +1360,6 @@ function configurarPanelesOcultables(panelIzquierdo, panelDerecho) {
     }
   });
 
-  // -----------------------------------------------------
-  // Botón interno para cerrar panel derecho
-  // -----------------------------------------------------
-
   var botonCerrarDerecho = ui.Button({
     label: 'Ocultar gráficos >>>',
     style: {
@@ -810,10 +1370,6 @@ function configurarPanelesOcultables(panelIzquierdo, panelDerecho) {
       margin: '0 0 8px 0'
     }
   });
-
-  // -----------------------------------------------------
-  // Eventos de apertura / cierre
-  // -----------------------------------------------------
 
   botonAbrirIzquierdo.onClick(function() {
     panelIzquierdo.style().set('shown', true);
@@ -835,33 +1391,19 @@ function configurarPanelesOcultables(panelIzquierdo, panelDerecho) {
     botonAbrirDerecho.style().set('shown', true);
   });
 
-  // -----------------------------------------------------
-  // Insertar botones de cierre al inicio de cada panel
-  // -----------------------------------------------------
-
   panelIzquierdo.insert(0, botonCerrarIzquierdo);
   panelDerecho.insert(0, botonCerrarDerecho);
 
-  // -----------------------------------------------------
-  // Estado inicial: ambos paneles ocultos
-  // -----------------------------------------------------
-
   panelIzquierdo.style().set('shown', false);
   panelDerecho.style().set('shown', false);
-
-  // -----------------------------------------------------
-  // Agregar botones flotantes al mapa
-  // -----------------------------------------------------
 
   Map.add(botonAbrirIzquierdo);
   Map.add(botonAbrirDerecho);
 }
 
-
 // =======================================================
 // DIBUJO DE POLÍGONO
 // =======================================================
-
 function prepararDibujoPoligono() {
   var drawingTools = Map.drawingTools();
 
@@ -876,7 +1418,6 @@ function prepararDibujoPoligono() {
   drawingTools.draw();
 }
 
-
 function limpiarDibujos() {
   var drawingTools = Map.drawingTools();
 
@@ -885,7 +1426,6 @@ function limpiarDibujos() {
     drawingTools.layers().remove(layer);
   }
 }
-
 
 function obtenerAOIDibujado() {
   var drawingTools = Map.drawingTools();
@@ -904,11 +1444,9 @@ function obtenerAOIDibujado() {
   return ee.Geometry(geom);
 }
 
-
 // =======================================================
 // LECTURA DE AOI DESDE TEXTO
 // =======================================================
-
 function obtenerAOIDesdeTexto(texto) {
   texto = texto.trim();
 
@@ -925,28 +1463,22 @@ function obtenerAOIDesdeTexto(texto) {
   // Caso coordenadas o GeoJSON.
   var obj = JSON.parse(texto);
 
-  // GeoJSON FeatureCollection
   if (obj.type === 'FeatureCollection') {
     return ee.FeatureCollection(obj).geometry();
   }
 
-  // GeoJSON Feature
   if (obj.type === 'Feature') {
     obj = obj.geometry;
   }
 
-  // GeoJSON Polygon
   if (obj.type === 'Polygon') {
     return ee.Geometry.Polygon(obj.coordinates);
   }
 
-  // GeoJSON MultiPolygon
   if (obj.type === 'MultiPolygon') {
     return ee.Geometry.MultiPolygon(obj.coordinates);
   }
 
-  // Coordenadas directas:
-  // [[[-74.2,4.9],[-74.2,4.5],[-73.7,4.5],[-73.7,4.9],[-74.2,4.9]]]
   if (Array.isArray(obj)) {
     return ee.Geometry.Polygon(obj);
   }
@@ -954,11 +1486,115 @@ function obtenerAOIDesdeTexto(texto) {
   throw new Error('Formato de AOI no reconocido.');
 }
 
+// =======================================================
+// FUNCIÓN AUXILIAR PARA EVITAR ERROR SI FALTA UNA CAPA
+// =======================================================
+function imagenSegura(img, nombreBanda, aoi) {
+  if (img) {
+    return ee.Image(img)
+      .rename(nombreBanda)
+      .clip(aoi);
+  }
+
+  print('Advertencia: capa faltante en UI. Se usará imagen 0:', nombreBanda);
+
+  return ee.Image.constant(0)
+    .rename(nombreBanda)
+    .clip(aoi);
+}
+
+// =======================================================
+// IMAGEN RESUMEN PARA EXPORTACIÓN E INSPECTOR
+// =======================================================
+function construirImagenResumen(app) {
+  var aoi = app.aoi;
+
+  return ee.Image.cat([
+    // Pronóstico ECMWF
+    imagenSegura(app.pronostico7.temperatura, 'temp_7d_C', aoi),
+    imagenSegura(app.pronostico15.temperatura, 'temp_15d_C', aoi),
+    imagenSegura(app.pronostico7.precipitacion, 'precip_pronostico_7d_mm', aoi),
+    imagenSegura(app.pronostico15.precipitacion, 'precip_pronostico_15d_mm', aoi),
+    imagenSegura(app.pronostico7.humedad, 'humedad_relativa_7d_pct', aoi),
+    imagenSegura(app.pronostico15.humedad, 'humedad_relativa_15d_pct', aoi),
+    imagenSegura(app.pronostico7.viento, 'viento_7d_ms', aoi),
+    imagenSegura(app.pronostico15.viento, 'viento_15d_ms', aoi),
+    imagenSegura(app.pronostico7.et0, 'ET0_7d_mm', aoi),
+    imagenSegura(app.pronostico15.et0, 'ET0_15d_mm', aoi),
+
+    // Precipitación observada
+    imagenSegura(app.precipitacionObservada, 'lluvia_observada_mm', aoi),
+    imagenSegura(app.anomaliaLluvia, 'anomalia_lluvia_mm', aoi),
+    imagenSegura(app.spi, 'SPI', aoi),
+
+    // Suelos
+    imagenSegura(app.perfilSuelo.select('arcilla_pct'), 'arcilla_pct', aoi),
+    imagenSegura(app.perfilSuelo.select('arena_pct'), 'arena_pct', aoi),
+    imagenSegura(app.perfilSuelo.select('limo_pct'), 'limo_pct', aoi),
+    imagenSegura(app.perfilSuelo.select('materia_organica'), 'materia_organica_pct', aoi),
+    imagenSegura(app.perfilSuelo.select('carbono_organico'), 'carbono_organico', aoi),
+    imagenSegura(app.perfilSuelo.select('ph_h2o'), 'ph_suelo', aoi),
+    imagenSegura(app.perfilSuelo.select('densidad_aparente_g_cm3'), 'densidad_aparente_g_cm3', aoi),
+    imagenSegura(app.perfilSuelo.select('capacidad_campo_pct'), 'capacidad_campo_pct', aoi),
+    imagenSegura(app.perfilSuelo.select('punto_marchitez_pct'), 'punto_marchitez_pct', aoi),
+    imagenSegura(app.aguaDisponible, 'agua_disponible_mm', aoi),
+    imagenSegura(app.claseSuelo, 'clase_suelo', aoi),
+
+    // DEM
+    imagenSegura(app.elevacion, 'elevacion_m', aoi),
+    imagenSegura(app.pendiente, 'pendiente_grados', aoi),
+    imagenSegura(app.aspecto, 'aspecto_grados', aoi),
+    imagenSegura(app.twi, 'TWI', aoi),
+    imagenSegura(app.lsFactor, 'LS_factor', aoi),
+
+    // Sentinel-1
+    imagenSegura(app.vv, 'S1_VV', aoi),
+    imagenSegura(app.vh, 'S1_VH', aoi),
+    imagenSegura(app.ratioS1, 'S1_ratio_VV_VH', aoi),
+    imagenSegura(app.humedadS1, 'humedad_s1', aoi),
+
+    // Sentinel-2
+    imagenSegura(app.ndvi, 'NDVI', aoi),
+    imagenSegura(app.evi, 'EVI', aoi),
+    imagenSegura(app.ndmi, 'NDMI', aoi),
+    imagenSegura(app.ndwi, 'NDWI', aoi),
+    imagenSegura(app.msavi, 'MSAVI', aoi),
+    imagenSegura(app.savi, 'SAVI', aoi),
+    imagenSegura(app.bsi, 'BSI', aoi),
+    imagenSegura(app.lai, 'LAI', aoi),
+    imagenSegura(app.coberturaVegetal, 'cobertura_vegetal', aoi),
+    imagenSegura(app.clorofila, 'clorofila_rededge', aoi),
+
+    // Balance hídrico
+    imagenSegura(app.balance.MapaBalance, 'balance_hidrico_mm', aoi),
+    imagenSegura(app.balance.MapaDeficit, 'deficit_hidrico_mm', aoi),
+    imagenSegura(app.balance.MapaExceso, 'exceso_hidrico_mm', aoi),
+    imagenSegura(app.balance.HumedadSuelo, 'humedad_relativa_suelo', aoi),
+    imagenSegura(app.balance.Escorrentia, 'escorrentia_mm', aoi),
+    imagenSegura(app.balance.Infiltracion, 'infiltracion_mm', aoi),
+    imagenSegura(app.balance.Percolacion, 'percolacion_mm', aoi),
+    imagenSegura(app.balance.Recarga, 'recarga_mm', aoi),
+
+    // Indicadores ganaderos
+    imagenSegura(app.indicadores.CondicionPasto, 'condicion_pasto', aoi),
+    imagenSegura(app.indicadores.Biomasa, 'biomasa_kg_ms_ha', aoi),
+    imagenSegura(app.indicadores.EstresHidrico, 'estres_hidrico', aoi),
+    imagenSegura(app.indicadores.RiesgoSequia, 'riesgo_sequia', aoi),
+    imagenSegura(app.indicadores.RiesgoBarro, 'riesgo_barro', aoi),
+    imagenSegura(app.indicadores.DisponibilidadAgua, 'disponibilidad_agua_mm', aoi),
+    imagenSegura(app.indicadores.CargaAnimalSugerida, 'carga_animal_UGG_ha', aoi),
+    imagenSegura(app.indicadores.IndiceCalor, 'THI_indice_calor', aoi),
+    imagenSegura(app.indicadores.IndiceConfortAnimal, 'confort_animal', aoi),
+    imagenSegura(app.indicadores.DisponibilidadForraje, 'disponibilidad_forraje_kg_ms_ha', aoi),
+    imagenSegura(app.indicadores.ProduccionPotencial, 'produccion_potencial_relativa', aoi),
+    imagenSegura(app.indicadores.ClasificacionPotreros, 'clasificacion_potreros', aoi),
+    imagenSegura(app.indicadores.SemaforoGanadero, 'semaforo_ganadero', aoi)
+  ]).float();
+}
 
 // =======================================================
 // FUNCIONES AUXILIARES DE UI
 // =======================================================
-
 function crearFilaLeyenda(color, texto) {
   var cajaColor = ui.Label({
     style: {
@@ -976,11 +1612,13 @@ function crearFilaLeyenda(color, texto) {
   });
 
   return ui.Panel({
-    widgets: [cajaColor, etiqueta],
+    widgets: [
+      cajaColor,
+      etiqueta
+    ],
     layout: ui.Panel.Layout.Flow('horizontal')
   });
 }
-
 
 function formatoValor(valor) {
   if (valor === null || valor === undefined) {
@@ -994,12 +1632,10 @@ function formatoValor(valor) {
   return valor;
 }
 
-
 function validarFecha(fecha) {
   var patron = /^\d{4}-\d{2}-\d{2}$/;
   return patron.test(fecha);
 }
-
 
 function fechaFinalMayorIgual(fechaInicio, fechaFinal) {
   var inicio = new Date(fechaInicio);
