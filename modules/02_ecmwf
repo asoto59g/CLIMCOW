@@ -1,17 +1,59 @@
+/**** modules/02_ecmwf.js ****/
+
+// =======================================================
+// MÓDULO 02 - ECMWF
+// Pronóstico meteorológico para CLIMCOW
+// =======================================================
+// Fuente:
+// ECMWF/NRT_FORECAST/IFS/OPER
+//
+// Variables principales:
+// - Temperatura 2 m en °C
+// - Precipitación acumulada en mm
+// - Humedad relativa en %
+// - Radiación solar en MJ/m²
+// - Viento 10 m en m/s
+// - ET0 aproximada en mm
+//
+// Corrección importante:
+// Las temperaturas de ECMWF vienen en Kelvin.
+// Se convierten a °C con:
+// °C = K - 273.15
+// =======================================================
+
+
+// =======================================================
+// DATASET ECMWF
+// =======================================================
 var ECMWF_ID = 'ECMWF/NRT_FORECAST/IFS/OPER';
 
-// Colección del último ciclo disponible
+
+// =======================================================
+// FUNCIONES AUXILIARES
+// =======================================================
+
+// Convierte una imagen en Kelvin a Celsius.
+function kelvinACelsius(img) {
+  return ee.Image(img).subtract(273.15);
+}
+
+
+// Obtiene la colección del último ciclo disponible de ECMWF.
 function coleccionUltimoPronostico(aoi) {
   var col = ee.ImageCollection(ECMWF_ID)
     .filterBounds(aoi);
 
-  var ultimaCorrida = ee.Number(col.aggregate_max('creation_time'));
+  var ultimaCorrida = ee.Number(
+    col.aggregate_max('creation_time')
+  );
 
   return col
     .filter(ee.Filter.eq('creation_time', ultimaCorrida))
     .sort('forecast_hours');
 }
 
+
+// Filtra el último pronóstico hasta una cantidad de días.
 function filtrarPorDias(aoi, dias) {
   var horas = ee.Number(dias).multiply(24);
 
@@ -19,99 +61,187 @@ function filtrarPorDias(aoi, dias) {
     .filter(ee.Filter.lte('forecast_hours', horas));
 }
 
-// Temperatura media 2 m en °C
+
+// =======================================================
+// TEMPERATURA 2 m
+// =======================================================
+// ECMWF entrega temperature_2m_sfc en Kelvin.
+// Se convierte a grados Celsius.
 exports.obtenerTemperatura = function(aoi, dias) {
-  return filtrarPorDias(aoi, dias)
+  var tempK = filtrarPorDias(aoi, dias)
     .select('temperature_2m_sfc')
-    .mean()
+    .mean();
+
+  var tempC = kelvinACelsius(tempK)
     .rename('temp_C')
     .clip(aoi);
+
+  return tempC;
 };
 
-// Precipitación acumulada en mm.
-// ECMWF total_precipitation_sfc está en m y es acumulada desde hora 0.
+
+// =======================================================
+// PRECIPITACIÓN ACUMULADA
+// =======================================================
+// ECMWF total_precipitation_sfc está en metros y es acumulada.
+// Se usa max() porque la banda acumulada aumenta con el horizonte
+// de pronóstico.
+// Conversión:
+// m * 1000 = mm
 exports.obtenerPrecipitacion = function(aoi, dias) {
-  return filtrarPorDias(aoi, dias)
+  var precipMM = filtrarPorDias(aoi, dias)
     .select('total_precipitation_sfc')
     .max()
     .multiply(1000)
     .rename('precip_mm')
     .clip(aoi);
+
+  return precipMM;
 };
 
-// Humedad relativa aproximada desde temperatura y punto de rocío
+
+// =======================================================
+// HUMEDAD RELATIVA
+// =======================================================
+// Se calcula aproximando RH desde:
+// - temperature_2m_sfc
+// - dewpoint_temperature_2m_sfc
+//
+// IMPORTANTE:
+// Ambas variables vienen en Kelvin.
+// La fórmula de Magnus debe usar °C.
 exports.obtenerHumedad = function(aoi, dias) {
-  var img = filtrarPorDias(aoi, dias)
-    .select(['temperature_2m_sfc', 'dewpoint_temperature_2m_sfc'])
+  var imgK = filtrarPorDias(aoi, dias)
+    .select([
+      'temperature_2m_sfc',
+      'dewpoint_temperature_2m_sfc'
+    ])
     .mean();
 
-  var rh = img.expression(
+  var tempC = kelvinACelsius(
+    imgK.select('temperature_2m_sfc')
+  );
+
+  var dewpointC = kelvinACelsius(
+    imgK.select('dewpoint_temperature_2m_sfc')
+  );
+
+  var humedadRelativa = ee.Image().expression(
     '100 * (exp((17.625 * Td) / (243.04 + Td)) / exp((17.625 * T) / (243.04 + T)))',
     {
-      T: img.select('temperature_2m_sfc'),
-      Td: img.select('dewpoint_temperature_2m_sfc')
+      T: tempC,
+      Td: dewpointC
     }
   )
-  .clamp(0, 100)
-  .rename('humedad_relativa');
+    .clamp(0, 100)
+    .rename('humedad_relativa')
+    .clip(aoi);
 
-  return rh.clip(aoi);
+  return humedadRelativa;
 };
 
-// Radiación solar descendente acumulada, convertida de J/m2 a MJ/m2
+
+// =======================================================
+// RADIACIÓN SOLAR
+// =======================================================
+// surface_solar_radiation_downwards_sfc viene acumulada en J/m².
+// Se convierte a MJ/m²:
+// J/m² / 1,000,000 = MJ/m²
 exports.obtenerRadiacion = function(aoi, dias) {
-  return filtrarPorDias(aoi, dias)
+  var radiacionMJ = filtrarPorDias(aoi, dias)
     .select('surface_solar_radiation_downwards_sfc')
     .max()
     .divide(1e6)
     .rename('radiacion_MJ_m2')
     .clip(aoi);
+
+  return radiacionMJ;
 };
 
-// Viento 10 m en m/s
+
+// =======================================================
+// VIENTO 10 m
+// =======================================================
+// Se calcula velocidad del viento desde componentes U y V:
+// viento = sqrt(u² + v²)
 exports.obtenerViento = function(aoi, dias) {
-  var col = filtrarPorDias(aoi, dias)
-    .select(['u_component_of_wind_10m_sfc', 'v_component_of_wind_10m_sfc'])
+  var viento = filtrarPorDias(aoi, dias)
+    .select([
+      'u_component_of_wind_10m_sfc',
+      'v_component_of_wind_10m_sfc'
+    ])
     .map(function(img) {
       var u = img.select('u_component_of_wind_10m_sfc');
       var v = img.select('v_component_of_wind_10m_sfc');
 
-      return u.pow(2)
+      var velocidad = u.pow(2)
         .add(v.pow(2))
         .sqrt()
         .rename('viento_ms')
         .copyProperties(img, img.propertyNames());
+
+      return velocidad;
+    })
+    .mean()
+    .rename('viento_ms')
+    .clip(aoi);
+
+  return viento;
+};
+
+
+// =======================================================
+// EVAPOTRANSPIRACIÓN DE REFERENCIA APROXIMADA - ET0
+// =======================================================
+// Aproximación tipo Hargreaves usando:
+// - Temperatura media en °C
+// - Temperatura máxima en °C
+// - Temperatura mínima en °C
+// - Radiación solar acumulada en MJ/m²
+//
+// IMPORTANTE:
+// El módulo original calculaba ET0 usando temperatura en Kelvin.
+// Aquí se corrige convirtiendo cada imagen de temperatura a °C.
+exports.obtenerEvapotranspiracion = function(aoi, dias) {
+  var tempColC = filtrarPorDias(aoi, dias)
+    .select('temperature_2m_sfc')
+    .map(function(img) {
+      return kelvinACelsius(img)
+        .rename('temp_C')
+        .copyProperties(img, img.propertyNames());
     });
 
-  return col.mean().clip(aoi);
-};
+  var tmed = tempColC.mean();
+  var tmax = tempColC.max();
+  var tmin = tempColC.min();
 
-// ET0 aproximada por Hargreaves usando temperatura y radiación.
-// Producto operativo simplificado; calibrar localmente si se requiere precisión agronómica.
-exports.obtenerEvapotranspiracion = function(aoi, dias) {
-  var col = filtrarPorDias(aoi, dias).select('temperature_2m_sfc');
+  var radiacion = exports.obtenerRadiacion(aoi, dias);
 
-  var tmed = col.mean();
-  var tmax = col.max();
-  var tmin = col.min();
+  var amplitudTermica = tmax
+    .subtract(tmin)
+    .max(0);
 
-  var rs = exports.obtenerRadiacion(aoi, dias); // MJ/m2 acumulado
-
+  // Fórmula aproximada.
+  // Resultado interpretado como ET0 acumulada aproximada del periodo.
   var et0 = ee.Image().expression(
-    '0.0023 * (Tmed + 17.8) * sqrt(max(Tmax - Tmin, 0)) * Rs * 0.408',
+    '0.0023 * (Tmed + 17.8) * sqrt(DT) * Rs * 0.408',
     {
       Tmed: tmed,
-      Tmax: tmax,
-      Tmin: tmin,
-      Rs: rs
+      DT: amplitudTermica,
+      Rs: radiacion
     }
   )
-  .max(0)
-  .rename('ET0_mm');
+    .max(0)
+    .rename('ET0_mm')
+    .clip(aoi);
 
-  return et0.clip(aoi);
+  return et0;
 };
 
+
+// =======================================================
+// PRONÓSTICO 7 DÍAS
+// =======================================================
 exports.pronostico7dias = function(aoi) {
   return {
     precipitacion: exports.obtenerPrecipitacion(aoi, 7),
@@ -123,6 +253,10 @@ exports.pronostico7dias = function(aoi) {
   };
 };
 
+
+// =======================================================
+// PRONÓSTICO 15 DÍAS
+// =======================================================
 exports.pronostico15dias = function(aoi) {
   return {
     precipitacion: exports.obtenerPrecipitacion(aoi, 15),
