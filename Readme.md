@@ -4,7 +4,7 @@ Este proyecto implementa una aplicación modular en **Google Earth Engine Code E
 
 Visor geografico del proyecto:  https://api-project-732156244341.projects.earthengine.app/view/climcow
 
-A continuación, se presenta un resumen de las capas generadas, manteniendo las escalas y explicaciones solicitadas: 
+A continuación, se presenta un resumen de las capas generadas, manteniendo las escalas: 
 
 ## 1. Pronóstico Meteorológico (ECMWF) 
 
