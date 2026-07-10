@@ -84,6 +84,8 @@ Es el resumen operativo para el ganadero:
 
 **Nota importante:** Los indicadores de biomasa y carga animal son orientativos y deben calibrarse con mediciones de campo reales y registros locales. 
 
+Si el repo siguiente es instalado en https://code.earthengine.google.com/, en la pestaña "Inspector" puede cliclear sobre su finca cualquier punto y obtener la información igual qa los datos de la pestaña de "Promedios" de la localización.
+
 Acceso al repositorio de GEE:  https://code.earthengine.google.com/?accept_repo=users/oasotob/Proyecto_Ganadero
 
 <img width="1364" height="529" alt="image" src="https://github.com/user-attachments/assets/017077e9-94c4-4153-8b2c-c9da9b08beeb" />
